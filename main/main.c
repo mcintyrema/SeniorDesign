@@ -367,6 +367,7 @@ void test_private_key_encrypted_write(const esp_partition_t *partition, const un
 
 
 void get_message_digest(unsigned char message, size_t message_len){
+
   #define SHA_MODE_REG                  ((DR_REG_SHA_BASE) + 0x00)
 }
 
