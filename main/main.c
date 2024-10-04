@@ -13,31 +13,16 @@
 #include "mbedtls/rsa.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
+#include <mbedtls/sha512.h>
 /* ESP32-S3 */
 // #include "SPIFFS.h" //use on Arduino
 #include "esp_partition.h"
-#include <inttypes.h> 
-#include "esp_err.h"
-#include "soc/lldesc.h"
-#include "esp_mac.h"
+// #include <inttypes.h> 
+// #include "esp_err.h"
+// #include "soc/lldesc.h"
+// #include "esp_mac.h"
 
-/* SHA Accelerator Base Address*/
-#define SHA_BASE_REG (0x6003B000)
-
-/* SHA INPUT MESSAGE REGS */
-#define SHA_M_0_REG  (SHA_BASE_REG + 0x0080)
-
-
-// SHA result registers 
-#define SHA_H_0_REG  (SHA_BASE_REG + 0x0040)
-
-// SHA REGISTERS
-#define SHA_MODE_REG          (SHA_BASE_REG + 0x0000)
-#define SHA_START_REG         (SHA_BASE_REG + 0x0010)
-#define SHA_DMA_BLOCK_NUM_REG (SHA_BASE_REG + 0x000C)
-#define SHA_BUSY_REG          (SHA_BASE_REG + 0x0018)
-#define SHA_DMA_START_REG     (SHA_BASE_REG + 0x001C)
-#define SHA_BLOCK_SIZE 128 
+#define SHA512_DIGEST_LENGTH 64
 
 // RSA REGISTERS
 #define RSA_BASE_REG (0x6003C000)
@@ -63,10 +48,8 @@ void test_keys(mbedtls_pk_context *pk);
 void store_priv_key(const uint8_t* key_data, size_t key_len);
 void save_rsa_private_key(mbedtls_pk_context *pk);
 void test_private_key_encrypted_write(const esp_partition_t *partition, const unsigned char *original_key, size_t key_len);
-uint8_t *get_message_digest(unsigned char *message, size_t message_len);
-unsigned char* pad_message(const unsigned char *message, size_t message_len, size_t *padded_len);
-void parse_and_write_sha_message(const unsigned char *padded_message, size_t padded_len);
-uint8_t test_hash(uint8_t *message_digest, size_t length);
+void get_message_digest(unsigned char *message, size_t message_len, unsigned char *hash);
+void test_hash(uint8_t *message_digest, size_t length);
 void get_digital_sig(mbedtls_pk_context* pk, uint8_t message_digest);
 
 // CSPRNG returns number sequence
@@ -401,120 +384,44 @@ void test_private_key_encrypted_write(const esp_partition_t *partition, const un
 }
 
 
-unsigned char* pad_message(const unsigned char *message, size_t message_len, size_t *padded_len) {
-    const size_t block_size = 128; // SHA-512 uses a block size of 1024 bits (128 bytes)
-    const size_t length_field_size = 16; // 128 bits = 16 bytes
+void get_message_digest(unsigned char *message, size_t message_len, unsigned char *hash){
+    mbedtls_sha512_context ctx; // SHA-512 context
 
-    // Calculate total length after padding
-    size_t total_len = message_len + 1 + length_field_size; // +1 for '1' bit, +length_field_size for the 128-bit length
-    size_t padding_len = (block_size - (total_len % block_size)) % block_size; // Amount of padding to add
-    total_len += padding_len; // Total length includes the padding
+    // Initialize the SHA-512 context
+    mbedtls_sha512_init(&ctx);
+    
+    // Start the SHA-512 process
+    mbedtls_sha512_starts(&ctx, 0); // 0 for SHA-512
 
-    // Allocate memory for the padded message
-    unsigned char* padded_message = malloc(total_len);
-    if (!padded_message) return NULL;
-    memcpy(padded_message, message, message_len);
+    // Update the context with the message
+    mbedtls_sha512_update(&ctx, message, message_len);
 
-    // Append the '1' bit (0x80)
-    padded_message[message_len] = 0x80;
+    // Finalize the hash
+    mbedtls_sha512_finish(&ctx, hash);
 
-    // Append k zero bits
-    memset(padded_message + message_len + 1, 0, padding_len);
+    // Clean up
+    mbedtls_sha512_free(&ctx);
 
-    // Append the original message length (in bits)
-    uint64_t original_length_bits = message_len * 8; // Convert length to bits
-    for (int i = 0; i < length_field_size; i++) {
-        padded_message[total_len - length_field_size + i] = (original_length_bits >> (56 - i * 8)) & 0xFF;
+    return;
+}
+
+
+void test_hash(uint8_t *message_digest, size_t length) {
+    // Check if the message digest is NULL or length is zero
+    if (message_digest == NULL || length == 0) {
+        printf("Error: Invalid message digest or length.\n");
+        return; // Return an error code
     }
 
-    // Set the padded length to the output parameter
-    *padded_len = total_len;
-
-    return padded_message;
-}
-
-
-void parse_and_write_sha_message(const unsigned char *padded_message, size_t padded_len) {
-    // Each block is 128 bytes (1024 bits)
-    const size_t block_size = 128; // 1024 bits = 128 bytes
-
-    // Loop through each 1024-bit (128-byte) block
-    for (size_t block_index = 0; block_index < padded_len / block_size; block_index++) {
-        const unsigned char *block = padded_message + (block_index * block_size);
-        
-        for (int i = 0; i < 16; i++) {
-            // Extract the 64-bit word
-            uint64_t word = *(uint64_t*)(block + (i * 8)); // Each word is 8 bytes
-            
-            // Split into two 32-bit parts
-            uint32_t high = (uint32_t)(word >> 32);  // Most significant 32 bits
-            uint32_t low = (uint32_t)(word & 0xFFFFFFFF); // Least significant 32 bits
-
-            // Write to the corresponding registers
-            uint32_t high_addr = SHA_M_0_REG + (i * 8);      // Address for high part
-            uint32_t low_addr = SHA_M_0_REG + (i * 8) + 4;  // Address for low part
-            printf("Writing to register: 0x%08x (high part)\n", (unsigned int)high_addr);
-            printf("Writing to register: 0x%08x (low part)\n", (unsigned int)low_addr);
-
-            REG_WRITE(high_addr, high); // Write high part
-            REG_WRITE(low_addr, low);    // Write low part
-        }
-    }
-}
-
-
-uint8_t *get_message_digest(unsigned char *message, size_t message_len){
-  REG_WRITE(SHA_MODE_REG, 4); // Set mode to SHA-512
-
-  // Calculate the number of 128-byte blocks (SHA-512 processes blocks in 128-byte blocks)
-  // size_t num_blocks = (message_len + SHA_BLOCK_SIZE - 1) / SHA_BLOCK_SIZE;
-  // Set the number of message blocks to process
-  // REG_WRITE(SHA_DMA_BLOCK_NUM_REG, num_blocks);
-
-  // Padding
-  size_t padded_len;
-  unsigned char *padded_message = pad_message(message, message_len, &padded_len);
-  // Parsing and write message to appropriate registers
-  parse_and_write_sha_message(padded_message, padded_len);
-
-  REG_WRITE(SHA_START_REG, 1);
-  vTaskDelay(500);
-  uint32_t status = REG_READ(SHA_START_REG);
-  printf("SHA status: 0x%08x\n", (unsigned int)status); 
-
-  while (REG_READ(SHA_BUSY_REG) != 0) {}
-
-  uint32_t hash[16];
-
-  // read all 16 registers and store value as 16 32-bit integers
-  for (int i = 0; i < 16; i++) {
-    hash[i] = REG_READ(SHA_H_0_REG + (i *4)); // Read the hash by adding 4 to address
-    // printf("hash[%d] = 0x%08x\n", i, (unsigned int)hash[i]);
-  }
-
-  // store hash as byte array
-  uint8_t *full_hash = malloc(64); // 512 bits = 64 bytes
-  for (int i = 0; i < 16; i++) {
-    // split each 32-bit int into 4 bytes
-    full_hash[i * 4 + 0] = (hash[i] >> 24) & 0xFF; // shift most significant 8 bits to the lease significant byte position
-    full_hash[i * 4 + 1] = (hash[i] >> 16) & 0xFF; // second byte of 32-bit int
-    full_hash[i * 4 + 2] = (hash[i] >>  8) & 0xFF; // third byte
-    full_hash[i * 4 + 3] = (hash[i] >>  0) & 0xFF; // fourth byte
-  }
-
-  test_hash(full_hash, 64);
-  return full_hash;
-}
-
-
-uint8_t test_hash(uint8_t *message_digest, size_t length) {
     printf("Message Digest Length: %zu bytes\n", length);
+    printf("SHA-512 Hash: ");
+    
+    // Print each byte of the message digest as a hex value
     for (size_t i = 0; i < length; i++) {
-      printf("%02x", message_digest[i]);  // Print each byte as a hex value
+        printf("%02x", message_digest[i]);
     }
     printf("\n");
-
-    return message_digest;
+    return;
 }
 
 
@@ -555,14 +462,16 @@ int main(){
 
   // Generate message digest using SHA-512
   printf("Generating message digest...\n");
-  size_t digest_len = sizeof(sequence);
-  uint8_t *message_digest = get_message_digest(sequence, digest_len);
+  size_t sequence_len = sizeof(sequence);
+  unsigned char *message_digest = malloc(SHA512_DIGEST_LENGTH);
+  get_message_digest(sequence, sequence_len, message_digest);
+  test_hash(message_digest, SHA512_DIGEST_LENGTH);
   printf("Message digest generated successfully.\n");
 
   // Generate digital signature S = m^d mod n, m<n
-  printf("Generating digital signature...\n");
-  get_digital_sig(pk, message_digest);
-  printf("Digital signature generated successfully.\n");
+  // printf("Generating digital signature...\n");
+  // get_digital_sig(pk, message_digest);
+  // printf("Digital signature generated successfully.\n");
 
   
   mbedtls_pk_free(pk);
