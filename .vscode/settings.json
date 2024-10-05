@@ -17,6 +17,8 @@
     "files.associations": {
         "esp_littlefs.h": "c",
         "esp_partition.h": "c",
-        "sha_struct.h": "c"
+        "sha_struct.h": "c",
+        "freertos.h": "c",
+        "esp_task_wdt.h": "c"
     }
 }

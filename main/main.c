@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 /* wolfSSL */
-// #include "wolfssl.h"
 #include "wolfssl/wolfcrypt/settings.h"
 #include "wolfssl/ssl.h"
 #include "wolfssl/wolfcrypt/random.h"
@@ -13,10 +12,16 @@
 #include "mbedtls/rsa.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
+#include "mbedtls/bignum.h"
 #include <mbedtls/sha512.h>
 /* ESP32-S3 */
-// #include "SPIFFS.h" //use on Arduino
 #include "esp_partition.h"
+#include "esp_task_wdt.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_err.h"
+
 // #include <inttypes.h> 
 // #include "esp_err.h"
 // #include "soc/lldesc.h"
@@ -34,6 +39,10 @@
 #define RSA_MODEXP_START_REG (RSA_BASE_REG + 0x080C)
 #define RSA_IDLE_REG (RSA_BASE_REG + 0x0818)
 #define RSA_CONSTANT_TIME_REG (RSA_BASE_REG + 0x0820)
+#define RSA_M_PRIME_REG (RSA_BASE_REG + 0x0800)
+#define RSA_IDL_REG (RSA_BASE_REG + 0x0818)
+
+#define CONFIG_FREERTOS_NUMBER_OF_CORES 2
 
 
 
@@ -50,6 +59,7 @@ void save_rsa_private_key(mbedtls_pk_context *pk);
 void test_private_key_encrypted_write(const esp_partition_t *partition, const unsigned char *original_key, size_t key_len);
 void get_message_digest(unsigned char *message, size_t message_len, unsigned char *hash);
 void test_hash(uint8_t *message_digest, size_t length);
+void compute_mpi_exp(mbedtls_mpi *X, mbedtls_mpi *A, mbedtls_mpi *E);
 void get_digital_sig(mbedtls_pk_context* pk, uint8_t message_digest);
 
 // CSPRNG returns number sequence
@@ -385,38 +395,31 @@ void test_private_key_encrypted_write(const esp_partition_t *partition, const un
 
 
 void get_message_digest(unsigned char *message, size_t message_len, unsigned char *hash){
-    mbedtls_sha512_context ctx; // SHA-512 context
-
-    // Initialize the SHA-512 context
-    mbedtls_sha512_init(&ctx);
+    mbedtls_sha512_context sha_ctx; 
+    mbedtls_sha512_init(&sha_ctx);
     
-    // Start the SHA-512 process
-    mbedtls_sha512_starts(&ctx, 0); // 0 for SHA-512
+    // SHA-512 checksum calculation
+    mbedtls_sha512_starts(&sha_ctx, 0); 
+    // Update the context with the message for ongoing checksum calculation
+    mbedtls_sha512_update(&sha_ctx, message, message_len);
+    // Finish hashing and write result to ouput buffer
+    mbedtls_sha512_finish(&sha_ctx, hash);
 
-    // Update the context with the message
-    mbedtls_sha512_update(&ctx, message, message_len);
-
-    // Finalize the hash
-    mbedtls_sha512_finish(&ctx, hash);
-
-    // Clean up
-    mbedtls_sha512_free(&ctx);
-
+    mbedtls_sha512_free(&sha_ctx);
     return;
 }
 
 
 void test_hash(uint8_t *message_digest, size_t length) {
-    // Check if the message digest is NULL or length is zero
     if (message_digest == NULL || length == 0) {
-        printf("Error: Invalid message digest or length.\n");
-        return; // Return an error code
+      printf("Invalid message digest or length.\n");
+      return; 
     }
 
     printf("Message Digest Length: %zu bytes\n", length);
     printf("SHA-512 Hash: ");
     
-    // Print each byte of the message digest as a hex value
+    // Display bytes of the message digest in hex
     for (size_t i = 0; i < length; i++) {
         printf("%02x", message_digest[i]);
     }
@@ -425,7 +428,41 @@ void test_hash(uint8_t *message_digest, size_t length) {
 }
 
 
+
+void compute_mpi_exp(mbedtls_mpi *X, mbedtls_mpi *A, mbedtls_mpi *E){
+  mbedtls_mpi one, temp;
+
+  // Initialize the mpi variables
+  mbedtls_mpi_init(&one);
+  mbedtls_mpi_init(&temp);
+  
+  // Set one = 1
+  mbedtls_mpi_lset(&one, 1);
+
+  // Set X = 1 (this will accumulate the result)
+  mbedtls_mpi_lset(X, 1);
+
+  // Loop while the exponent is not zero
+  mbedtls_mpi_copy(&temp, E); // Copy exponent to temporary mpi to decrement
+
+  while (mbedtls_mpi_cmp_int(&temp, 0) > 0) {
+    // X = X * A (equivalent to X *= A in normal math)
+    mbedtls_mpi_mul_mpi(X, X, A);
+
+    // Decrease exponent by 1: temp = temp - 1
+    mbedtls_mpi_sub_mpi(&temp, &temp, &one);
+  }
+
+      mbedtls_mpi_free(&one);
+      mbedtls_mpi_free(&temp);
+}
+
+
 void get_digital_sig(mbedtls_pk_context* pk, uint8_t message_digest){
+  /// Handle Watchdog Timer Errors ///
+  esp_task_wdt_add(NULL); 
+
+  /// Preprocessing ///
   // Extract core parameters of RSA key
   mbedtls_mpi P, Q, N, D, E;
   mbedtls_mpi_init(&P); 
@@ -435,14 +472,74 @@ void get_digital_sig(mbedtls_pk_context* pk, uint8_t message_digest){
   mbedtls_mpi_init(&E);
   mbedtls_rsa_export(mbedtls_pk_rsa(*pk), &N, &P, &Q, &D, &E);
 
-  // Generate digital signature S = m^d mod n, m<n
-  //Write (N 32 − 1) to the RSA_MODE_REG register. N=2048
-  REG_WRITE(RSA_MODE_REG, (2048/32 - 1));
+  /// Compute r and M' ///
+  mbedtls_mpi n, b, R, M, r, M_prime, mpi_digest;
+  mbedtls_mpi_init(&n); 
+  mbedtls_mpi_init(&b);
+  mbedtls_mpi_init(&R);
+  mbedtls_mpi_init(&M);
+  mbedtls_mpi_init(&r);
+  mbedtls_mpi_init(&M_prime);
+  mbedtls_mpi_init(&mpi_digest);
+  /// Computing parameter, r ///
+  // r = R^2 mod M, and R = b^n and b = 2^32 and n = N/32, N = 2048
+  // Store integer value in MPI type, n = 2048/32
+  esp_task_wdt_reset();
+  mbedtls_mpi_lset(&n, 2048/32);
+  // Use MPI shift to achieve b = 2^32
+  mbedtls_mpi_lset(&b, 1);
+  mbedtls_mpi_shift_l(&b, 32);
+  // Exponentiation of MPI type, R = b^n
+  esp_task_wdt_reset();
+  compute_mpi_exp(&R, &b, &n); // Custom function cause no mbedtls support
+  // Copy over MPI value for consistency with ESP32S3 TRM, M = N
+  mbedtls_mpi_copy(&M, &N);
+  // Compute r using modular exponentiation for MPI types, r = R^2 mod M
+  esp_task_wdt_reset();
+  mbedtls_mpi_mul_mpi(&r, &R, &R); 
+  mbedtls_mpi_mod_mpi(&r, &r, &M); 
 
+  /// Computing parameter, M' ///
+  // M = M^(-1) mod b
+  esp_task_wdt_reset();
+  mbedtls_mpi_inv_mod(&M_prime, &M, &b);
+  esp_task_wdt_reset();
+
+  // Pad hashed message to equal 2048 bits so operands are equal lengths
+  mbedtls_mpi_lset(&mpi_digest, message_digest);
+  size_t mpi_len = mbedtls_mpi_size(&mpi_digest);
+  esp_task_wdt_reset();
+  unsigned char *padded_digest = (unsigned char *)calloc(2048 / 8, sizeof(unsigned char));  // 2048 bits = 256 bytes
+  mbedtls_mpi_write_binary(&mpi_digest, padded_digest + (2048 - mpi_len), mpi_len);
+  esp_task_wdt_reset();
+
+  /// Generate digital signature S = m^d mod n, m<n (Z=X^Y mod M on esp) ///
+  //Write (N 32 − 1) to the RSA_MODE_REG register. N=2048
+  // REG_WRITE(RSA_MODE_REG, (2048/32 - 1));
+  // Write M' to the RSA_M_PRIME_REG register (M' = M^(-1) mod b)
+  // uint32_t m_prime_val;
+  // mbedtls_mpi_write_binary(&M_prime, (unsigned char *)&m_prime_val, sizeof(m_prime_val));
+  // REG_WRITE(RSA_M_PRIME_REG, m_prime_val);
+  // // Config registers related to acceleration operations
+  // REG_WRITE(RSA_CONSTANT_TIME_REG, 0); // 0 = acceleration, 1 = no acceleration
+  // // Write parameters to appropriate memory blocks
+  // REG_WRITE(RSA_X_MEM, padded_digest);
+  // REG_WRITE(RSA_Y_MEM, &D);
+  // REG_WRITE(RSA_M_MEM, &M);
+  // REG_WRITE(RSA_Z_MEM, &r);
+  // // Enable the RSA_MODEXP_START_REG register to start computation
+  // REG_WRITE(RSA_MODEXP_START_REG, 1);
+  // // Wait for completion when RSA_IDL_REG becomes 1
+  // while(REG_READ(RSA_IDL_REG) != 1) {}
+  // // Read result, Z, from RSA_Z_MEM
+  // unsigned char *signature = (unsigned char *)REG_READ(RSA_Z_MEM);
+  esp_task_wdt_reset();
 }
 
 
 int main(){
+    esp_task_wdt_add(NULL);
+    
   // Generate CSPRNS
   printf("Generating random sequence...\n");
   unsigned char sequence[4];
@@ -469,11 +566,12 @@ int main(){
   printf("Message digest generated successfully.\n");
 
   // Generate digital signature S = m^d mod n, m<n
-  // printf("Generating digital signature...\n");
-  // get_digital_sig(pk, message_digest);
-  // printf("Digital signature generated successfully.\n");
+  printf("Generating digital signature...\n");
+  get_digital_sig(pk, message_digest);
+  esp_task_wdt_reset();
+  printf("Digital signature generated successfully.\n");
 
-  
+  esp_task_wdt_reset();
   mbedtls_pk_free(pk);
   free(message_digest);
   return 0;
@@ -482,5 +580,18 @@ int main(){
 
 void app_main(void)
 {
+  vTaskStartScheduler();
+  #if !CONFIG_ESP_TASK_WDT_INIT
+     esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 100,
+        .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1,    // Bitmask of all cores
+        .trigger_panic = false,
+    };
+    ESP_ERROR_CHECK(esp_task_wdt_init(&twdt_config));
+    printf("TWDT initialized\n");
+  #endif
   main();
+  ESP_ERROR_CHECK(esp_task_wdt_deinit());
+  printf("TWDT deinitialized\n");
+
 }
