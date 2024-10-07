@@ -217,7 +217,7 @@ void test_keys(mbedtls_pk_context *pk){
 
   // Check modulus length
   if (mbedtls_rsa_get_len(mbedtls_pk_rsa(*pk)) <= 256) {
-    printf("Key length is %d bytes.\n", mbedtls_rsa_get_len(mbedtls_pk_rsa(*pk)));
+    printf("Modulus length is %d bytes.\n", mbedtls_rsa_get_len(mbedtls_pk_rsa(*pk)));
   }   
 
   // Extract core parameters of RSA key
@@ -392,7 +392,7 @@ void test_hash(uint8_t *message_digest, size_t length) {
     }
 
     printf("Message Digest Length: %zu bytes\n", length);
-    printf("SHA-512 Hash: ");
+    printf("SHA-512 Hash: \n");
     
     // Display bytes of the message digest in hex
     for (size_t i = 0; i < length; i++) {
@@ -412,7 +412,7 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest){
   mbedtls_mpi_init(&D);
   mbedtls_mpi_init(&E);
   mbedtls_rsa_export(mbedtls_pk_rsa(*pk), &N, &P, &Q, &D, &E);
-  printf("RSA parameters exported.\n");
+  // printf("RSA parameters exported.\n");
 
   // Verify m < n
   size_t modulus_size = mbedtls_mpi_size(&N);
@@ -436,41 +436,33 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest){
   mbedtls_mpi_exp_mod(&digital_signature, &message_mpi, &D, &N, NULL);
 
   // Verify 
-  // Get the message digest info structure for SHA1  
-  // size_t sig_size =  mbedtls_mpi_size(&digital_signature);
-  // unsigned char *char_sig = (unsigned char *)malloc(sig_size);
-  // mbedtls_mpi_write_binary(&digital_signature, (const unsigned char *)char_sig, sig_size);
-
-  // int ret = mbedtls_pk_verify(pk, MBEDTLS_MD_SHA512, (const unsigned char *)message_digest, SHA512_DIGEST_LENGTH, (const unsigned char *)char_sig, sig_size);
-  // if (ret != 0) {
-  //     printf("Invalid signature: %d \n", ret);
-  // } else {
-  //     printf("Valid signature\n");
-  // }
-  // free(char_sig);
-  // M = Semod n
   mbedtls_mpi message;
   mbedtls_mpi_init(&message); 
   int ret = mbedtls_mpi_exp_mod(&message, &digital_signature, &E, &N, NULL);
   if (ret != 0) {
-      printf("Invalid signature: %d \n", ret);
-  } else {
-      printf("Valid signature\n");
-      size_t size = mbedtls_mpi_size(&message);
+    printf("Signature is invalid.\n");
+  }
+  else {
+    size_t size = mbedtls_mpi_size(&message);
     unsigned char *buffer = malloc(size);
-    
-    if (buffer == NULL) {
-        printf("Memory allocation failed\n");
-        return;
-    }
 
-    // Write the MPI to the buffer in binary format
+    // Write the MPI to buffer in binary format
     mbedtls_mpi_write_binary(&message, buffer, size);
     
-    // Print the buffer in hexadecimal format
-    printf("MPI value: ");
+    // Print the decrypted message in hexadecimal format, prints the hash
+    printf("Decrypted message: \n");
     for (size_t i = 0; i < size; i++) {
-        printf("%02x ", buffer[i]);
+      printf("%02x", buffer[i]);
+    }
+
+    ret = memcmp(buffer, message_digest, SHA512_DIGEST_LENGTH); //compare bytes
+    if(ret == 0) {
+      printf("\nHashes match!\n");
+      printf("Signature is valid.\n");
+    } 
+    else{
+      printf("\nHashes do not match.\n");
+      printf("Signature is invalid.\n");
     }
   }
 }
@@ -488,9 +480,13 @@ int main(){
   unsigned char sequence[4];
   get_prns(sequence, sizeof(sequence));
   printf("Random sequence generated successfully.\n");
+  printf("Generated sequence: 0x");
+  for (int i = 0; i < sizeof(sequence); i++) {
+      printf("%02x", sequence[i]);
+  }
   
   // Generate RSA key pair and store in RSA context
-  printf("Generating key pair...\n");
+  printf("\nGenerating key pair...\n");
   mbedtls_pk_context* pk = gen_key_pair();
   test_keys(pk);
   printf("Key pair generated successfully.\n");
