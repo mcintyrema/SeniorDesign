@@ -21,7 +21,6 @@
 #include "freertos/task.h"
 #include "esp_err.h"
 
-
 #define SHA512_DIGEST_LENGTH 64
 
 
@@ -72,7 +71,6 @@ mbedtls_pk_context* gen_key_pair(){
     const char *pers = "rsa_keypair"; // Personalized string for entropy
   
     // Initialize contexts
-    // mbedtls_pk_init(&rsa);
     mbedtls_pk_init(pk);
     mbedtls_ctr_drbg_init(&ctr_drbg);
     mbedtls_entropy_init(&entropy);
