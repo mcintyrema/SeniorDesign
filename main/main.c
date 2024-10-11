@@ -20,6 +20,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_err.h"
+#include <esp_wifi.h>
+// #include <esp_netif.h>
+#include "esp_event.h"
+#include "nvs_flash.h"
+#include "esp_now.h"
 
 #define SHA512_DIGEST_LENGTH 64
 
@@ -36,6 +41,11 @@ void test_private_key_encrypted_write(const esp_partition_t *partition, const un
 void get_message_digest(unsigned char *message, size_t message_len, unsigned char *hash);
 void test_hash(uint8_t *message_digest, size_t length);
 void get_digital_sig(mbedtls_pk_context* pk, unsigned char * message_digest);
+void configure_wifi_station();
+void get_mac_address(uint8_t *address);
+void deinitialize_wifi();
+void connect_to_peer(uint8_t authorized_mac_addresses[6]);
+void format_data_to_send(unsigned char *message, uint8_t mac_address[6]);
 
 // CSPRNG returns number sequence
 void get_prns(unsigned char *randomBlock, size_t size)
@@ -466,49 +476,154 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest){
 }
 
 
-int main(){
-  // Subscribe task to WDT
-  esp_task_wdt_add(NULL);
-  esp_task_wdt_reset();
-  esp_task_wdt_delete(NULL);
-  esp_task_wdt_deinit();
 
-  // Generate CSPRNS
+void configure_wifi_station(){
+  // Initialize NVS partition storage
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      nvs_flash_erase();
+      nvs_flash_init();
+  }
+
+  // Initialize TCP/IP stack, but no need to start it
+  esp_netif_init();
+  esp_event_loop_create_default();
+  
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  esp_wifi_init(&cfg);
+  esp_wifi_set_mode(WIFI_MODE_STA);  // ESP-NOW requires station mode
+  esp_wifi_start();  // Start Wi-Fi for ESP-NOW functionality
+
+  // Initialize ESP-NOW
+  ret = esp_now_init();
+  if (ret != ESP_OK) {
+    printf("ESP-NOW initialization failed\n");
+    return;
+  }
+}
+
+
+void get_mac_address(uint8_t *address){
+    // Get MAC address
+    int ret = esp_wifi_get_mac(WIFI_IF_STA, address);
+    if (ret == ESP_OK) {
+        printf("MAC Address: %02X:%02X:%02X:%02X:%02X:%02X\n", 
+               address[0], address[1], address[2], 
+               address[3], address[4], address[5]);
+    } else {
+        printf("Failed to read MAC address\n");
+    }
+
+    // ESP-NOW usage logic goes here
+}
+
+
+void deinitialize_wifi(){
+  // Deinitialize ESP-NOW if needed
+  esp_now_deinit();
+  esp_wifi_stop();
+  esp_wifi_deinit();
+
+}
+
+
+void connect_to_peer(uint8_t authorized_mac_addresses[6]){
+  // Set peer info
+  struct esp_now_peer_info peerInfo;
+
+  // Get the MAC address string
+  memcpy(peerInfo.peer_addr, authorized_mac_addresses, 6);
+  peerInfo.channel = 1; // 1, 6, or 11
+  peerInfo.encrypt = 1;
+  esp_now_add_peer(&peerInfo);
+
+}
+
+
+void format_data_to_send(unsigned char *message, uint8_t mac_address[6]){
+  typedef struct struct_message {
+  unsigned char a[32];
+  } struct_message;
+
+  struct struct_message myData;
+  size_t message_len = strlen((char *)message);
+  memcpy(myData.a, message, message_len);
+
+  // Send message via ESP-NOW
+  esp_err_t result = esp_now_send(mac_address, (uint8_t *) &myData, sizeof(myData));
+  if (result == ESP_OK) {
+    printf("Sending confirmed.\n");
+  }
+  else {
+    printf("Sending error.\n");
+  }
+}
+
+
+int main(){
+  // // Subscribe task to WDT
+  // esp_task_wdt_add(NULL);
+  // esp_task_wdt_reset();
+  // esp_task_wdt_delete(NULL);
+  // esp_task_wdt_deinit();
+
+  // // Generate CSPRNS
   printf("Generating random sequence...\n");
   unsigned char sequence[4];
   get_prns(sequence, sizeof(sequence));
-  printf("Random sequence generated successfully.\n");
-  printf("Generated sequence: 0x");
-  for (int i = 0; i < sizeof(sequence); i++) {
-      printf("%02x", sequence[i]);
-  }
+  // printf("Random sequence generated successfully.\n");
+  // printf("Generated sequence: 0x");
+  // for (int i = 0; i < sizeof(sequence); i++) {
+  //     printf("%02x", sequence[i]);
+  // }
   
-  // Generate RSA key pair and store in RSA context
-  printf("\nGenerating key pair...\n");
-  mbedtls_pk_context* pk = gen_key_pair();
-  test_keys(pk);
-  printf("Key pair generated successfully.\n");
+  // // Generate RSA key pair and store in RSA context
+  // printf("\nGenerating key pair...\n");
+  // mbedtls_pk_context* pk = gen_key_pair();
+  // test_keys(pk);
+  // printf("Key pair generated successfully.\n");
 
-  // Encrypts only the private key in its own partition while the rest of the data is plaintext
-  printf("Storing private key...\n");
-  save_rsa_private_key(pk);
-  printf("Private key stored successfully.\n");
+  // // Encrypts only the private key in its own partition while the rest of the data is plaintext
+  // printf("Storing private key...\n");
+  // save_rsa_private_key(pk);
+  // printf("Private key stored successfully.\n");
 
-  // Generate message digest using SHA-512
-  printf("Generating message digest...\n");
-  size_t sequence_len = sizeof(sequence);
-  unsigned char *message_digest = malloc(SHA512_DIGEST_LENGTH);
-  get_message_digest(sequence, sequence_len, message_digest);
-  test_hash(message_digest, SHA512_DIGEST_LENGTH);
-  printf("Message digest generated successfully.\n");
+  // // Generate message digest using SHA-512
+  // printf("Generating message digest...\n");
+  // size_t sequence_len = sizeof(sequence);
+  // unsigned char *message_digest = malloc(SHA512_DIGEST_LENGTH);
+  // get_message_digest(sequence, sequence_len, message_digest);
+  // test_hash(message_digest, SHA512_DIGEST_LENGTH);
+  // printf("Message digest generated successfully.\n");
 
-  // Generate digital signature
-  printf("Generating digital signature...\n");
-  get_digital_sig(pk, message_digest);
-  printf("Digital signature generated successfully.\n");
+  // // Generate digital signature
+  // printf("Generating digital signature...\n");
+  // get_digital_sig(pk, message_digest);
+  // printf("Digital signature generated successfully.\n");
 
-  mbedtls_pk_free(pk);
-  free(message_digest);
+  // mbedtls_pk_free(pk);
+  // free(message_digest);
+
+  // For BOTH devices
+  configure_wifi_station();
+  uint8_t *baseMac = malloc(6);
+  get_mac_address(baseMac);
+  uint8_t authorized_mac_addresses[][6] = {
+    {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08},
+    {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0}
+  };
+
+  //for target device
+  connect_to_peer(authorized_mac_addresses[1]); //porty address
+
+  //for portable device
+  // connect_to_peer(authorized_mac_addresses[0]);
+
+  // Target device send number sequence to portable
+  format_data_to_send(sequence, authorized_mac_addresses[1]);
+
+  // for BOTH devices
+  deinitialize_wifi();
   return 0;
 }
 
