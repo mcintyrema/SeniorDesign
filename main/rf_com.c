@@ -17,10 +17,9 @@
 #include "rf_com.h"
 
 uint8_t authorized_mac_addresses[][6] = {
-        {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08}, // target COM11
-        {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0} // portable COM10
+        {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08}, // target COM11, STA
+        {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0} // portable COM10, AP
     };
-#define MAX_DATA_SIZE 32 // Maximum size for received data
 
 
 void configure_wifi_station(wifi_mode_t mode){
@@ -47,7 +46,7 @@ void configure_wifi_station(wifi_mode_t mode){
 
 void get_mac_address(uint8_t *address, wifi_interface_t ifx){
     // Get MAC address
-    int ret = esp_wifi_get_mac(WIFI_IF_STA, address);
+    int ret = esp_wifi_get_mac(ifx, address);
     if (ret == ESP_OK) {
         printf("MAC Address: %02X:%02X:%02X:%02X:%02X:%02X\n", 
                 address[0], address[1], address[2], 
@@ -124,17 +123,18 @@ void com_target_setup(){
     printf("\n");
 
     esp_now_register_send_cb(on_data_sent);
+    esp_now_register_recv_cb(on_data_recv);
     connect_to_peer(authorized_mac_addresses[1]); 
 }
 
 
 void com_portable_setup(){
     // configure_wifi_station(WIFI_MODE_AP);
-    configure_wifi_station(WIFI_MODE_APSTA); // Both Station and AP mode active
+    configure_wifi_station(WIFI_MODE_STA); // Both Station and AP mode active
 
 
     uint8_t *baseMac = malloc(6);
-    get_mac_address(baseMac, WIFI_IF_AP);
+    get_mac_address(baseMac, WIFI_IF_STA);
 
     printf("Peer MAC address: ");
     for (int i = 0; i < 6; i++) {
@@ -146,11 +146,17 @@ void com_portable_setup(){
     printf("\n");
 
     esp_now_register_recv_cb(on_data_recv);
+    esp_now_register_send_cb(on_data_sent);
     connect_to_peer(authorized_mac_addresses[0]); //target address
 }
 
 
 void on_data_recv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
+  if (data_len <= 0) {
+        printf("Received data length is invalid: %d\n", data_len);
+        return;
+    }
+    
     // Print the MAC address of the sender
     printf("Received message from: ");
     for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
@@ -173,8 +179,15 @@ void on_data_recv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
       unsigned char a[4];
     } struct_message;
     struct struct_message dataRecv;  
+    
     memcpy(&dataRecv, data, data_len);  
-    printf("Sequence received: %s\n", dataRecv.a);
+    // printf("Sequence received: %s\n", dataRecv.a);
+    // Print the received sequence in hex format
+    printf("Sequence received: ");
+    for (int i = 0; i < sizeof(dataRecv.a); i++) {
+        printf("%02X ", dataRecv.a[i]);
+    }
+    printf("\n");
 
 }
 
