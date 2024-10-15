@@ -29,28 +29,6 @@
 #include "rf_com.h"
 
 
-void communication_target(){
-    com_target_setup();
-
-    //Target device send number sequence to portable
-    printf("Generating random sequence...\n");
-    unsigned char sequence[4];
-    get_prns(sequence, sizeof(sequence));
-    printf("Random sequence generated successfully.\n");
-
-    format_data_to_send(sequence, authorized_mac_addresses[1]);
-    deinitialize_wifi();
-}
-
-
-void communication_portable(){
-    com_portable_setup();
-    esp_now_register_recv_cb(on_data_recv);
-    
-
-    // format_data_to_send(sequence, authorized_mac_addresses[0]);
-    // deinitialize_wifi();
-}
 
 int main(){
   // Subscribe task to WDT
@@ -95,9 +73,6 @@ int main(){
 
   mbedtls_pk_free(pk);
   free(message_digest);
-
-  communication_target();
-  communication_portable();
   return 0;
 }
 
@@ -105,6 +80,18 @@ int main(){
 void app_main(void)
 {
 //   main();
-    communication_target();
-    // communication_portable();
+    // com_target_setup();
+    com_portable_setup();
+    esp_wifi_set_max_tx_power(84);
+
+    printf("Generating random sequence...\n");
+    unsigned char sequence[4];
+    get_prns(sequence, sizeof(sequence));
+    printf("Random sequence generated successfully.\n");
+
+    while (1) {
+        // Keep the main loop running
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        // format_data_to_send(sequence, authorized_mac_addresses[1]);
+    }
 }

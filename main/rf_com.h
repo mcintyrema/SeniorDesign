@@ -9,7 +9,9 @@ void format_data_to_send(unsigned char *message, uint8_t mac_address[6]);
 void com_target_setup();
 void com_portable_setup();
 // void recv_data_portable(const uint8_t *mac_addr, const uint8_t *data, int data_len);
-void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len);
+void on_data_recv(const uint8_t *mac_addr, const uint8_t *data, int data_len);
+void on_data_sent(const uint8_t *mac_addr, esp_now_send_status_t status);
+
 extern uint8_t authorized_mac_addresses[][6];
 
 #endif

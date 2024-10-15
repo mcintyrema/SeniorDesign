@@ -20,14 +20,12 @@ uint8_t authorized_mac_addresses[][6] = {
         {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08}, // target COM11
         {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0} // portable COM10
     };
+#define MAX_DATA_SIZE 32 // Maximum size for received data
+
 
 void configure_wifi_station(wifi_mode_t mode){
   // Initialize NVS partition storage
-  esp_err_t ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      nvs_flash_erase();
-      nvs_flash_init();
-  }
+  nvs_flash_init();
 
   // Initialize TCP/IP stack, but no need to start it
   esp_netif_init();
@@ -39,7 +37,7 @@ void configure_wifi_station(wifi_mode_t mode){
   esp_wifi_start();  // Start Wi-Fi for ESP-NOW functionality
 
   // Initialize ESP-NOW
-  ret = esp_now_init();
+  int ret = esp_now_init();
   if (ret != ESP_OK) {
     printf("ESP-NOW initialization failed\n");
     return;
@@ -75,19 +73,27 @@ void connect_to_peer(uint8_t mac_addresses[6]){
   memcpy(peerInfo.peer_addr, mac_addresses, 6);
   peerInfo.channel = 1; // 1, 6, or 11
   peerInfo.encrypt = 1;
-  esp_now_add_peer(&peerInfo);
+  // esp_now_add_peer(&peerInfo);
+  esp_err_t result = esp_now_add_peer(&peerInfo);
+  if (result == ESP_OK) {
+    printf("Peer confirmed.\n");
+  }
+  else {
+    printf("Peer error.\n");
+  }
 
 }
 
 
 void format_data_to_send(unsigned char *message, uint8_t mac_address[6]){
   typedef struct struct_message {
-  unsigned char a[32];
+    unsigned char a[4];
   } struct_message;
 
   struct struct_message myData;
   size_t message_len = strlen((char *)message);
-  memcpy(myData.a, message, message_len);
+  // memcpy(myData.a, message, message_len);
+  memcpy(myData.a, message, 4);
 
   // Send message via ESP-NOW
   esp_err_t result = esp_now_send(mac_address, (uint8_t *) &myData, sizeof(myData));
@@ -101,7 +107,9 @@ void format_data_to_send(unsigned char *message, uint8_t mac_address[6]){
 
 
 void com_target_setup(){
-    configure_wifi_station(WIFI_MODE_STA);
+    // configure_wifi_station(WIFI_MODE_STA);
+    configure_wifi_station(WIFI_MODE_APSTA); // Both Station and AP mode active
+
     
     uint8_t *baseMac = malloc(6);
     get_mac_address(baseMac, WIFI_IF_STA);
@@ -115,12 +123,15 @@ void com_target_setup(){
     }
     printf("\n");
 
+    esp_now_register_send_cb(on_data_sent);
     connect_to_peer(authorized_mac_addresses[1]); 
 }
 
 
 void com_portable_setup(){
-    configure_wifi_station(WIFI_MODE_AP);
+    // configure_wifi_station(WIFI_MODE_AP);
+    configure_wifi_station(WIFI_MODE_APSTA); // Both Station and AP mode active
+
 
     uint8_t *baseMac = malloc(6);
     get_mac_address(baseMac, WIFI_IF_AP);
@@ -134,15 +145,16 @@ void com_portable_setup(){
     }
     printf("\n");
 
+    esp_now_register_recv_cb(on_data_recv);
     connect_to_peer(authorized_mac_addresses[0]); //target address
 }
 
 
-void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len) {
+void on_data_recv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
     // Print the MAC address of the sender
     printf("Received message from: ");
     for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
-        printf("%02X", recv_info->src_addr[i]);
+        printf("%02X", mac_addr[i]);
         if (i < ESP_NOW_ETH_ALEN - 1) {
             printf(":");
         }
@@ -155,4 +167,19 @@ void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int
         printf("%02X ", data[i]);
     }
     printf("\n");
+
+    // Store the received data in a local buffer
+    typedef struct struct_message {
+      unsigned char a[4];
+    } struct_message;
+    struct struct_message dataRecv;  
+    memcpy(&dataRecv, data, data_len);  
+    printf("Sequence received: %s\n", dataRecv.a);
+
+}
+
+
+void on_data_sent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  printf("\r\nLast Packet Send Status:\t");
+  printf(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success\n" : "Delivery Fail\n");
 }
