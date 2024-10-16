@@ -15,11 +15,19 @@
 #include "esp_now.h"
 #include <esp_netif.h>
 #include "rf_com.h"
+#include "rsa_functions.h"
 
 uint8_t authorized_mac_addresses[][6] = {
         {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08}, // target COM11, STA
         {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0} // portable COM10, AP
     };
+
+typedef struct struct_message {
+    float temp;
+} struct_message;
+
+struct_message test_data; 
+struct_message test_data_port; 
 
 
 void configure_wifi_station(wifi_mode_t mode){
@@ -70,8 +78,8 @@ void connect_to_peer(uint8_t mac_addresses[6]){
   struct esp_now_peer_info peerInfo;
   // Get the MAC address string
   memcpy(peerInfo.peer_addr, mac_addresses, 6);
-  peerInfo.channel = 1; // 1, 6, or 11
-  peerInfo.encrypt = 1;
+  peerInfo.channel = 0; // 1, 6, or 11
+  peerInfo.encrypt = 0;
   // esp_now_add_peer(&peerInfo);
   esp_err_t result = esp_now_add_peer(&peerInfo);
   if (result == ESP_OK) {
@@ -106,9 +114,8 @@ void format_data_to_send(unsigned char *message, uint8_t mac_address[6]){
 
 
 void com_target_setup(){
-    // configure_wifi_station(WIFI_MODE_STA);
-    configure_wifi_station(WIFI_MODE_APSTA); // Both Station and AP mode active
-
+    configure_wifi_station(WIFI_MODE_STA);
+    esp_now_register_send_cb(OnDataSent);
     
     uint8_t *baseMac = malloc(6);
     get_mac_address(baseMac, WIFI_IF_STA);
@@ -121,17 +128,15 @@ void com_target_setup(){
         }
     }
     printf("\n");
-
-    esp_now_register_send_cb(on_data_sent);
-    esp_now_register_recv_cb(on_data_recv);
+    
     connect_to_peer(authorized_mac_addresses[1]); 
+    // esp_now_register_recv_cb(OnDataRecv);
 }
 
 
 void com_portable_setup(){
-    // configure_wifi_station(WIFI_MODE_AP);
-    configure_wifi_station(WIFI_MODE_STA); // Both Station and AP mode active
-
+    configure_wifi_station(WIFI_MODE_STA); 
+    esp_now_register_recv_cb(OnDataRecv_port);
 
     uint8_t *baseMac = malloc(6);
     get_mac_address(baseMac, WIFI_IF_STA);
@@ -145,54 +150,72 @@ void com_portable_setup(){
     }
     printf("\n");
 
-    esp_now_register_recv_cb(on_data_recv);
-    esp_now_register_send_cb(on_data_sent);
     connect_to_peer(authorized_mac_addresses[0]); //target address
+    // esp_now_register_send_cb(OnDataSent_port);
 }
 
 
-void on_data_recv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
-  if (data_len <= 0) {
-        printf("Received data length is invalid: %d\n", data_len);
-        return;
-    }
-    
-    // Print the MAC address of the sender
-    printf("Received message from: ");
-    for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
-        printf("%02X", mac_addr[i]);
-        if (i < ESP_NOW_ETH_ALEN - 1) {
-            printf(":");
-        }
-    }
-    printf("\n");
-
-    // Print the received data
-    printf("Data received: ");
-    for (int i = 0; i < data_len; i++) {
-        printf("%02X ", data[i]);
-    }
-    printf("\n");
-
-    // Store the received data in a local buffer
-    typedef struct struct_message {
-      unsigned char a[4];
-    } struct_message;
-    struct struct_message dataRecv;  
-    
-    memcpy(&dataRecv, data, data_len);  
-    // printf("Sequence received: %s\n", dataRecv.a);
-    // Print the received sequence in hex format
-    printf("Sequence received: ");
-    for (int i = 0; i < sizeof(dataRecv.a); i++) {
-        printf("%02X ", dataRecv.a[i]);
-    }
-    printf("\n");
-
-}
-
-
-void on_data_sent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   printf("\r\nLast Packet Send Status:\t");
-  printf(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success\n" : "Delivery Fail\n");
+  printf(status == ESP_NOW_SEND_SUCCESS ? "Delivered Successfully\n" : "Delivery Fail\n");
 }
+
+
+void OnDataRecv_port(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&test_data_port, incomingData, sizeof(test_data_port));
+  printf("Received data.\n");
+
+  // Print the MAC address of the sender
+  printf("Received message from: ");
+  for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
+      printf("%02X", mac[i]);
+      if (i < ESP_NOW_ETH_ALEN - 1) {
+          printf(":");
+      }
+  }
+  printf("\n");
+
+  // Print the received data
+  printf("Data received: ");
+  for (int i = 0; i < len; i++) {
+      printf("%02X ", incomingData[i]);
+  }
+  printf("\n");
+}
+
+
+void send_sequence_task() {
+  // Generate CSPRNS
+  printf("Generating random sequence...\n");
+  unsigned char sequence[4];
+  get_prns(sequence, sizeof(sequence));
+  printf("Random sequence generated successfully.\n");
+
+  while(1){
+    esp_err_t result = esp_now_send(authorized_mac_addresses[1], (uint8_t *) &sequence, sizeof(sequence));
+
+    if (result == ESP_OK) {
+      printf("\nSent Successfully.\n");
+    } else {
+      printf("Error while sending the data.\n");
+    }
+
+    // Print the sent data
+    printf("Data sent: ");
+    for (int i = 0; i < sizeof(sequence); i++) {
+        printf("%02X ", sequence[i]);
+    }
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Delay for 2 seconds
+  }
+}
+
+
+
+void receive_sequence_task() {
+    // No explicit polling required as the callback handles received messages
+    while (1) {
+      printf("Waiting for incoming data...\n");
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+

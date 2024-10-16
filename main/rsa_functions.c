@@ -1,30 +1,30 @@
-/* C libraries */
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdint.h>
-/* wolfSSL */
-#include "wolfssl/wolfcrypt/settings.h"
-#include "wolfssl/ssl.h"
-#include "wolfssl/wolfcrypt/random.h"
-/* mbedTLS */
-#include "mbedtls/pk.h"
-#include "mbedtls/rsa.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/bignum.h"
-#include <mbedtls/sha512.h>
-/* ESP32-S3 */
-#include "esp_partition.h"
-#include "esp_task_wdt.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_err.h"
-#include <esp_wifi.h>
-// #include <esp_netif.h>
-#include "esp_event.h"
-#include "nvs_flash.h"
-#include "esp_now.h"
+// /* C libraries */
+// #include <stdio.h>
+// #include <string.h>
+// #include <stdlib.h>
+// #include <stdint.h>
+// /* wolfSSL */
+// #include "wolfssl/wolfcrypt/settings.h"
+// #include "wolfssl/ssl.h"
+// #include "wolfssl/wolfcrypt/random.h"
+// /* mbedTLS */
+// #include "mbedtls/pk.h"
+// #include "mbedtls/rsa.h"
+// #include "mbedtls/entropy.h"
+// #include "mbedtls/ctr_drbg.h"
+// #include "mbedtls/bignum.h"
+// #include <mbedtls/sha512.h>
+// /* ESP32-S3 */
+// #include "esp_partition.h"
+// #include "esp_task_wdt.h"
+// #include "freertos/FreeRTOS.h"
+// #include "freertos/task.h"
+// #include "esp_err.h"
+// #include <esp_wifi.h>
+// // #include <esp_netif.h>
+// #include "esp_event.h"
+// #include "nvs_flash.h"
+// #include "esp_now.h"
 /* COM FILES */
 #include "rsa_functions.h"
 

@@ -75,143 +75,24 @@ int main(){
   return 0;
 }
 
-uint8_t broadcast_address[] = {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0};
-
-typedef struct struct_message {
-    float temp;
-} struct_message;
-char success;
-
-struct_message test_data; 
-esp_now_peer_info_t peerInfo;
-
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  printf("\r\nDelivery Status: ");
-  printf(status == ESP_NOW_SEND_SUCCESS ? "Deliverd Successfully" : "Delivery Fail");
-  if (status ==0){
-    success = "Delivery Success :)";
-  }
-  else{
-    success = "Delivery Fail :(";
-  }
-}
-
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  memcpy(&test_data, incomingData, sizeof(test_data));
-  printf("data receviced");
-}
-
 
 void app_main_target(void)
 {
-//   main();
-    configure_wifi_station(WIFI_MODE_STA);
-    if (esp_now_init() != ESP_OK) {
-    printf("Error initializing ESP-NOW");
-    return;
-  }
-  esp_now_register_send_cb(OnDataSent);
-
-  memcpy(peerInfo.peer_addr, broadcast_address, 6);
-  peerInfo.channel = 0; 
-  peerInfo.encrypt = 0;
-       
-  if (esp_now_add_peer(&peerInfo) != ESP_OK){
-    printf("Failed to add peer");
-    return;
-  }
-  esp_now_register_recv_cb(OnDataRecv);
-
-    while(1){
-        float fake_sequence = 2.45;
-        esp_err_t result = esp_now_send(broadcast_address, (uint8_t *) &fake_sequence, sizeof(fake_sequence));
-   
-        if (result == ESP_OK) {
-            printf("Sent Successfullt");
-        }
-        else {
-            printf("Getiing Error while sending the data");
-        }
-        vTaskDelay(3000);
-    }
-
-    esp_wifi_set_max_tx_power(84);
-    
+    com_target_setup();
+    xTaskCreate(send_sequence_task, "Send Task", 4096, NULL, 1, NULL);    
 }
 
-
-
-
-
-
-
-
-
-uint8_t broadcast_address_target[] = {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08};
-
-// typedef struct struct_message {
-//     float temp;
-// } struct_message;
-char success;
-
-struct_message test_data_port; 
-esp_now_peer_info_t peerInfo;
-void OnDataSent_port(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  printf("\r\nDelivery Status:\t");
-  printf(status == ESP_NOW_SEND_SUCCESS ? "Delivery Successfully" : "Delivery Fail");
-  if (status ==0){
-    success = "Delivery Success :)";
-  }
-  else{
-    success = "Delivery Fail :(";
-  }
-}
-
-void OnDataRecv_port(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  memcpy(&test_data_port, incomingData, sizeof(test_data_port));
-  printf("received data");
-}
 
 void app_main_port(void)
 {
-//   main();
-    configure_wifi_station(WIFI_MODE_STA);
-    if (esp_now_init() != ESP_OK) {
-    printf("Error initializing ESP-NOW");
-    return;
-  }
-  esp_now_register_send_cb(OnDataSent_port);
-
-  memcpy(peerInfo.peer_addr, broadcast_address_target, 6);
-  peerInfo.channel = 0; 
-  peerInfo.encrypt = 0;
-       
-  if (esp_now_add_peer(&peerInfo) != ESP_OK){
-    printf("Failed to add peer");
-    return;
-  }
-  esp_now_register_recv_cb(OnDataRecv_port);
-
-    while(1){
-        float fake_sequence = 444;
-        esp_err_t result = esp_now_send(broadcast_address_target, (uint8_t *) &fake_sequence, sizeof(fake_sequence));
-   
-        if (result == ESP_OK) {
-            printf("Sent Successfully");
-        }
-        else {
-            printf("Getiing Error while sending the data");
-        }
-        vTaskDelay(3000);
-    }
-
-    esp_wifi_set_max_tx_power(84);
-    
+    com_portable_setup();
+    xTaskCreate(receive_sequence_task, "Receive Task", 4096, NULL, 1, NULL);
 }
 
 
 
 void app_main(){
-    // app_main_target();
-    app_main_port();
+    esp_wifi_set_max_tx_power(84);
+    app_main_target();
+    // app_main_port();
 }
