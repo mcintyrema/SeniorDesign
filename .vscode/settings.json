@@ -21,6 +21,8 @@
         "freertos.h": "c",
         "esp_task_wdt.h": "c",
         "esp_wifi.h": "c",
-        "format": "c"
+        "format": "c",
+        "task.h": "c",
+        "freertosconfig.h": "c"
     }
 }

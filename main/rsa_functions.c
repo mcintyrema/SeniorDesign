@@ -395,7 +395,7 @@ void test_hash(uint8_t *message_digest, size_t length) {
 }
 
 
-void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest){
+void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest, mbedtls_mpi *digital_signature){
   // Extract core parameters of RSA key
   mbedtls_mpi P, Q, N, D, E;
   mbedtls_mpi_init(&P); 
@@ -411,7 +411,7 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest){
   if(SHA512_DIGEST_LENGTH > modulus_size){
     printf("Message digest larger than modulus. Exiting...");
     printf("Digest size: %d\n Modulus size: %d\n", SHA512_DIGEST_LENGTH, modulus_size);
-    return;
+    // return NULL;
   }
   else{
     printf("Size of message digest is less than size of modulus.\n");
@@ -423,11 +423,21 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest){
   mbedtls_mpi_read_binary(&message_mpi, message_digest, SHA512_DIGEST_LENGTH);
 
   // Get signature: S = m^d mod n
-  mbedtls_mpi digital_signature;
-  mbedtls_mpi_init(&digital_signature); 
-  mbedtls_mpi_exp_mod(&digital_signature, &message_mpi, &D, &N, NULL);
+  mbedtls_mpi_exp_mod(digital_signature, &message_mpi, &D, &N, NULL);
+}
 
+
+void verify_dig_sig(mbedtls_pk_context *pk, mbedtls_mpi digital_signature, unsigned char *message_digest){
   // Verify 
+  mbedtls_mpi_init(&digital_signature); 
+  mbedtls_mpi P, Q, N, D, E;
+  mbedtls_mpi_init(&P); 
+  mbedtls_mpi_init(&Q);
+  mbedtls_mpi_init(&N);
+  mbedtls_mpi_init(&D);
+  mbedtls_mpi_init(&E);
+  mbedtls_rsa_export(mbedtls_pk_rsa(*pk), &N, &P, &Q, &D, &E);
+
   mbedtls_mpi message;
   mbedtls_mpi_init(&message); 
   int ret = mbedtls_mpi_exp_mod(&message, &digital_signature, &E, &N, NULL);
