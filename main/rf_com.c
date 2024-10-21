@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stdint.h>
 /* ESP*/
 #include "esp_partition.h"
@@ -19,8 +20,9 @@
 
 uint8_t authorized_mac_addresses[][6] = {
         {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08}, // target COM11, STA
-        {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0}, // portable COM10, AP
-        {0x72, 0xBB, 0xCA, 0x3F, 0x6C, 0xBB}
+        {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0},// portable COM10, AP
+        {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // broadcast
+        {0x76, 0xCC, 0xCA, 0x3F, 0x70, 0xCC} // port receives from target address
     };
 
 TaskHandle_t sendSeqHandle = NULL;
@@ -28,13 +30,6 @@ TaskHandle_t rxHandle = NULL;
 TaskHandle_t sequenceHandle = NULL;
 TaskHandle_t sendSigHandle = NULL;
 TaskHandle_t rxSignature = NULL;
-
-typedef struct struct_message {
-    float temp;
-} struct_message;
-
-struct_message test_data; 
-struct_message test_data_port; 
 
 const uint8_t *received_num_sequence = NULL;
 size_t received_sequence_length = 0;
@@ -91,7 +86,7 @@ void connect_to_peer(uint8_t mac_addresses[6]){
   struct esp_now_peer_info peerInfo;
   // Get the MAC address string
   memcpy(peerInfo.peer_addr, mac_addresses, 6);
-  peerInfo.channel = 0; // 1, 6, or 11
+  peerInfo.channel = 1; // 1, 6, or 11
   peerInfo.encrypt = 0;
   // esp_now_add_peer(&peerInfo);
   esp_err_t result = esp_now_add_peer(&peerInfo);
@@ -105,11 +100,10 @@ void connect_to_peer(uint8_t mac_addresses[6]){
 }
 
 
-
 void com_target_setup(){
-    configure_wifi_station(WIFI_MODE_STA);
-    esp_now_register_recv_cb(OnDataRecv);
-    // esp_now_register_send_cb(OnDataSent);
+    configure_wifi_station(WIFI_MODE_APSTA);
+    // esp_now_register_recv_cb(OnDataRecv);
+    esp_now_register_send_cb(OnDataSent);
     
     uint8_t *baseMac = malloc(6);
     get_mac_address(baseMac, WIFI_IF_STA);
@@ -123,15 +117,17 @@ void com_target_setup(){
     }
     printf("\n");
     
+    esp_wifi_set_channel(1, 6); 
     connect_to_peer(authorized_mac_addresses[1]); 
-    // esp_now_register_recv_cb(OnDataRecv);
-    esp_now_register_send_cb(OnDataSent);
+    esp_now_register_recv_cb(OnDataRecv);
+    // esp_now_register_send_cb(OnDataSent);
 }
 
 
 void com_portable_setup(){
-    configure_wifi_station(WIFI_MODE_STA); 
-    esp_now_register_recv_cb(OnDataRecv_port);
+    configure_wifi_station(WIFI_MODE_APSTA); 
+    // esp_now_register_recv_cb(OnDataRecv_port);
+    esp_now_register_send_cb(OnDataSent_port);
 
     uint8_t *baseMac = malloc(6);
     get_mac_address(baseMac, WIFI_IF_STA);
@@ -145,9 +141,10 @@ void com_portable_setup(){
     }
     printf("\n");
 
+    esp_wifi_set_channel(1, 6); 
     connect_to_peer(authorized_mac_addresses[0]); //target address
-    connect_to_peer(authorized_mac_addresses[2]);
-    esp_now_register_send_cb(OnDataSent_port);
+    // esp_now_register_send_cb(OnDataSent_port);
+    esp_now_register_recv_cb(OnDataRecv_port);
 }
 
 
@@ -173,24 +170,6 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len){
     }
     printf("\n");
   signature_received = true;
-  // for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
-  //     printf("%02X", mac[i]);
-  //     if (i < ESP_NOW_ETH_ALEN - 1) {
-  //         printf(":");
-  //     }
-  // }
-  // printf("\n");
-
-  // printf("Received chunk of size: %d\n", len);
-  // if (incomingData + len > 256) {
-  //     printf("Error: Received signature exceeds expected size.\n");
-  //     return; // Handle error
-  // }
-  
-  // Verify digital signature task on target device
-  // Compute hash of received sequence
-  // unsigned char *message_digest = malloc(SHA512_DIGEST_LENGTH);
-  // get_message_digest(sequence, sequence_len, message_digest);
   return;
 }
 
@@ -338,7 +317,7 @@ void send_dig_sig(void *const pvParameters){
     if (result != ESP_OK) {
       printf("Error sending chunk. Trying again...\n");
       vTaskDelay(pdMS_TO_TICKS(2000));
-      esp_err_t result = esp_now_send(authorized_mac_addresses[0], (const uint8_t *)digital_signature_bytes + offset, chunk_size);
+      result = esp_now_send(authorized_mac_addresses[0], (const uint8_t *)digital_signature_bytes + offset, chunk_size);
       if (result != ESP_OK) {
         printf("Error sending chunk.\n");
         return;
@@ -359,9 +338,12 @@ void send_dig_sig(void *const pvParameters){
 
 void receive_sig_task(){
   printf("Waiting for incoming data...\n");
+
     // Wait until message
     while (!signature_received) {
+      printf("go");
       vTaskDelay(pdMS_TO_TICKS(1000));
+      printf("still running");
     }
     // delete task when message received
     vTaskDelete(rxSignature);

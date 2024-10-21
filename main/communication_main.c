@@ -108,23 +108,24 @@ void app_main_target(void)
     //setup
     com_target_setup();
     //loop
+    TaskStatus_t xTaskDetails;
+    vTaskGetInfo(sendSeqHandle, &xTaskDetails, pdTRUE, eInvalid);
+    printTaskState(xTaskDetails);
+
     xTaskCreate(send_sequence_task, "Send Task", 8096, NULL, 1, &sendSeqHandle); 
+    vTaskGetInfo(sendSeqHandle, &xTaskDetails, pdTRUE, eInvalid);
+    printTaskState(xTaskDetails);
+    if(xTaskDetails.eCurrentState == eDeleted){
+    
+        vTaskDelay(pdMS_TO_TICKS(5000));
 
-    vTaskDelay(pdMS_TO_TICKS(5000));
+        //receive sig task status
+        TaskStatus_t xTaskDetails2;
+        vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
+        printTaskState(xTaskDetails2);
 
-    //receive sig task status
-    TaskStatus_t xTaskDetails2;
-    vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
-    printTaskState(xTaskDetails2);
-
-    xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 2, &rxSignature);
-    // BaseType_t ret = xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 2, &rxSignature);
-    // if (ret == pdPASS) {
-    //     printf("Receiving signature task created successfully.\n");
-    // } else {
-    //     printf("Failed to create signing task.\n");
-    // }
-
+        xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 2, &rxSignature);
+    }
 
 }
 
@@ -142,4 +143,7 @@ void app_main(){
     esp_wifi_set_max_tx_power(84);
     app_main_target();
     // app_main_port();
+    TaskStatus_t xTaskDetails2;
+    vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
+    printTaskState(xTaskDetails2);
 }
