@@ -32,5 +32,6 @@ void receive_sig_task();
 extern TaskHandle_t sendSeqHandle;
 extern TaskHandle_t rxSignature;
 extern uint8_t authorized_mac_addresses[][6];
+extern SemaphoreHandle_t sendCompleteSemaphore;
 
 #endif

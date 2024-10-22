@@ -10,6 +10,7 @@ uint8_t authorized_peers[][6] = {
 
 TaskHandle_t sendSeqHandle = NULL;
 TaskHandle_t rxSignature = NULL;
+SemaphoreHandle_t sendCompleteSemaphore = NULL;
 
 int signature_received = 1;
 int valid_signature = 0;
@@ -79,10 +80,10 @@ void connect_to_portable(uint8_t mac_addresses[6]){
 
 void com_target_setup(){
     configure_wifi_target(WIFI_MODE_APSTA);
-    // esp_now_register_recv_cb(OnDataRecv);
-    esp_now_register_send_cb(OnDataSent);
+    // esp_now_register_send_cb(OnDataSent);
     
     uint8_t *baseMac = malloc(6);
+
     get_mac_address_target(baseMac, WIFI_IF_STA);
 
     printf("Peer MAC address: ");
@@ -94,10 +95,13 @@ void com_target_setup(){
     }
     printf("\n");
     
-    esp_wifi_set_channel(1, 6); 
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE); 
     connect_to_portable(authorized_peers[1]); 
+    vTaskDelay(pdMS_TO_TICKS(1000));
     esp_now_register_recv_cb(OnDataRecv);
-    // esp_now_register_send_cb(OnDataSent);
+    esp_now_register_send_cb(OnDataSent);
+
+    free(baseMac);
 }
 
 
@@ -111,19 +115,19 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len){
   // Print the MAC address of the sender
   printf("Data received from: ");
-  //   for (int i = 0; i < 6; i++) {
-  //       printf("%02X:", mac[i]);
-  //   }
-  //   printf("\n");
+    for (int i = 0; i < 6; i++) {
+        printf("%02X:", mac[i]);
+    }
+    printf("\n");
     
-  //   printf("Data length: %d\n", len);
-  //   printf("Received data: ");
-  //   for (int i = 0; i < len; i++) {
-  //       printf("%02X ", incomingData[i]);
-  //   }
-  //   printf("\n");
-  // signature_received = 0;
-  // return;
+    printf("Data length: %d\n", len);
+    printf("Received data: ");
+    for (int i = 0; i < len; i++) {
+        printf("%02X ", incomingData[i]);
+    }
+    printf("\n");
+  signature_received = 0;
+  return;
 }
 
 
@@ -139,6 +143,7 @@ void send_sequence_task() {
 
   if (result == ESP_OK) {
     printf("\nSent Successfully.\n");
+    xSemaphoreGive(sendCompleteSemaphore);
   } else {
     printf("Error while sending the data.\n");
   }
@@ -148,7 +153,6 @@ void send_sequence_task() {
   for (int i = 0; i < sizeof(sequence); i++) {
       printf("%02X ", sequence[i]);
   }
-  // vTaskEndScheduler();
   vTaskDelete(NULL);
 }
 
@@ -156,13 +160,13 @@ void send_sequence_task() {
 
 void receive_sig_task(){
   printf("Waiting for incoming data...\n");
+  printf("Initial signature_received value: %d\n", signature_received);
+
   // Wait until message
-  printf("%d", signature_received);
   while (signature_received == 1) {
-    printf("%d", signature_received);
-    vTaskDelay(pdMS_TO_TICKS(1000));
     printf("still running");
+    vTaskDelay(pdMS_TO_TICKS(1000));
   }
-    // delete task when message received
-    vTaskDelete(rxSignature);
+  // delete task when message received
+  vTaskDelete(rxSignature);
 }

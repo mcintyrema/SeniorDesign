@@ -5,9 +5,10 @@ uint8_t authorized_mac_addresses[][6] = {
         {0x32, 0xB7, 0xDA, 0x6A, 0xA1, 0x08}, // target COM11, STA
         {0x34, 0xB7, 0xDA, 0x6A, 0xBF, 0xD0},// portable COM10, AP
         {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // broadcast
-        {0x76, 0xCC, 0xCA, 0x3F, 0x70, 0xCC} // port receives from target address
+        {0x34, 0xb7, 0xda, 0x6a, 0xa1, 0x09} // target COM11, AP
     };
 
+uint8_t broadcast_mac = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 TaskHandle_t rxHandle = NULL;
 TaskHandle_t sequenceHandle = NULL;
 TaskHandle_t sendSigHandle = NULL;
@@ -82,30 +83,31 @@ void connect_to_peer(uint8_t mac_addresses[6]){
 
 void com_portable_setup(){
     configure_wifi_station(WIFI_MODE_APSTA); 
-    // esp_now_register_recv_cb(OnDataRecv_port);
+
     esp_now_register_send_cb(OnDataSent_port);
+    esp_now_register_recv_cb(OnDataRecv_port);
 
     uint8_t *baseMac = malloc(6);
     get_mac_address(baseMac, WIFI_IF_STA);
 
     printf("Peer MAC address: ");
     for (int i = 0; i < 6; i++) {
-        printf("%02X", authorized_mac_addresses[0][i]);
+        printf("%02X", authorized_mac_addresses[3][i]);
         if (i < 5) {
             printf(":"); // Print colon between bytes, but not after the last byte
         }
     }
     printf("\n");
 
-    esp_wifi_set_channel(1, 6); 
-    connect_to_peer(authorized_mac_addresses[0]); //target address
-    // esp_now_register_send_cb(OnDataSent_port);
-    esp_now_register_recv_cb(OnDataRecv_port);
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE); 
+    connect_to_peer(authorized_mac_addresses[3]); //target address
+
+    free(baseMac);
 }
 
 
 void OnDataSent_port(const uint8_t *mac_addr, esp_now_send_status_t status){
-  printf("\r\nDigital Signature Packet Send Status:\t");
+  printf("\rDigital Signature Packet Send Status:\t");
   printf(status == ESP_NOW_SEND_SUCCESS ? "Delivered Successfully\n" : "Delivery Fail\n");
   return;
 }
@@ -196,7 +198,7 @@ void handle_sequence_task() {
   free(message_digest);
 
   vTaskDelay(pdMS_TO_TICKS(2000));
-  BaseType_t result = xTaskCreate(send_dig_sig, "Send Signature Task", 4096, &digital_signature, 3, &sendSigHandle);
+  BaseType_t result = xTaskCreate(send_dig_sig, "Send Signature Task", 8096, &digital_signature, 3, &sendSigHandle);
   if (result == pdPASS) {
       printf("Signing task created successfully.\n");
   } else {
@@ -220,12 +222,14 @@ void send_dig_sig(void *const pvParameters){
   for (size_t offset = 0; offset < digital_signature_size; offset += 128) {
     size_t chunk_size = (offset + 128 <= digital_signature_size) ? 128 : (digital_signature_size - offset);
     vTaskDelay(pdMS_TO_TICKS(2000));
-    esp_err_t result = esp_now_send(authorized_mac_addresses[0], (const uint8_t *)digital_signature_bytes + offset, chunk_size);
+
+    printf("Packet Size: %zu bytes\n", chunk_size);
+    esp_err_t result = esp_now_send(authorized_mac_addresses[3], (const uint8_t *)digital_signature_bytes + offset, chunk_size);
     
     if (result != ESP_OK) {
       printf("Error sending chunk. Trying again...\n");
       vTaskDelay(pdMS_TO_TICKS(2000));
-      result = esp_now_send(authorized_mac_addresses[0], (const uint8_t *)digital_signature_bytes + offset, chunk_size);
+      result = esp_now_send(authorized_mac_addresses[3], (const uint8_t *)digital_signature_bytes + offset, chunk_size);
       if (result != ESP_OK) {
         printf("Error sending chunk.\n");
         return;

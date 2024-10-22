@@ -17,6 +17,7 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/bignum.h"
 #include <mbedtls/sha512.h>
+#include <mbedtls/sha256.h>
 /* ESP32-S3 */
 #include "esp_partition.h"
 #include "esp_task_wdt.h"

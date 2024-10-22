@@ -109,24 +109,24 @@ void printTaskState(TaskStatus_t xTaskDetails) {
 
 void app_main_target(void)
 {
+    sendCompleteSemaphore = xSemaphoreCreateBinary();
+
     clock_t start_t, end_t;
     double total_t;
 
-    start_t = clock();
     com_target_setup();
-    xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 1, &rxSignature);
 
-    // vTaskStartScheduler();
-    xTaskCreate(send_sequence_task, "Send Task", 8096, NULL, 1, &sendSeqHandle);
-    // vTaskStartScheduler();
+    start_t = clock();
+    xTaskCreate(send_sequence_task, "Send Task", 8192, NULL, 1, &sendSeqHandle);
     end_t = clock();
     total_t = (double)(end_t - start_t) / CLOCKS_PER_SEC;
     printf("Total time taken to generate and send sequnece: %f seconds\n", total_t);
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    // vTaskStartScheduler();
-    // xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 1, &rxSignature);
-    // vTaskStartScheduler();
+    if (xSemaphoreTake(sendCompleteSemaphore, portMAX_DELAY) == pdTRUE) {
+        vTaskDelete(sendSeqHandle);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 5, &rxSignature);
+    }
 
     vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
     printTaskState(xTaskDetails2);
