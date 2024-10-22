@@ -27,7 +27,11 @@
 #include "esp_now.h"
 /* COM FILES */
 #include "rsa_functions.h"
-#include "rf_com.h"
+#include "rf_target.h"
+#include "rf_portable.h"
+
+TaskStatus_t xTaskDetails;
+TaskStatus_t xTaskDetails2;
 
 
 int main(){
@@ -105,34 +109,32 @@ void printTaskState(TaskStatus_t xTaskDetails) {
 
 void app_main_target(void)
 {
-    //setup
+    clock_t start_t, end_t;
+    double total_t;
+
+    start_t = clock();
     com_target_setup();
-    //loop
-    TaskStatus_t xTaskDetails;
-    vTaskGetInfo(sendSeqHandle, &xTaskDetails, pdTRUE, eInvalid);
-    printTaskState(xTaskDetails);
+    xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 1, &rxSignature);
 
-    xTaskCreate(send_sequence_task, "Send Task", 8096, NULL, 1, &sendSeqHandle); 
-    vTaskGetInfo(sendSeqHandle, &xTaskDetails, pdTRUE, eInvalid);
-    printTaskState(xTaskDetails);
-    if(xTaskDetails.eCurrentState == eDeleted){
-    
-        vTaskDelay(pdMS_TO_TICKS(5000));
+    // vTaskStartScheduler();
+    xTaskCreate(send_sequence_task, "Send Task", 8096, NULL, 1, &sendSeqHandle);
+    // vTaskStartScheduler();
+    end_t = clock();
+    total_t = (double)(end_t - start_t) / CLOCKS_PER_SEC;
+    printf("Total time taken to generate and send sequnece: %f seconds\n", total_t);
 
-        //receive sig task status
-        TaskStatus_t xTaskDetails2;
-        vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
-        printTaskState(xTaskDetails2);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    // vTaskStartScheduler();
+    // xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 1, &rxSignature);
+    // vTaskStartScheduler();
 
-        xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 2, &rxSignature);
-    }
-
+    vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
+    printTaskState(xTaskDetails2);
 }
 
 
 void app_main_port(void)
 {
-    //setup
     com_portable_setup();
     //loop
     xTaskCreate(receive_sequence_task, "Receive Task", 4096, NULL, 1, &rxHandle);
@@ -141,9 +143,13 @@ void app_main_port(void)
 
 void app_main(){
     esp_wifi_set_max_tx_power(84);
+
     app_main_target();
     // app_main_port();
-    TaskStatus_t xTaskDetails2;
-    vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
-    printTaskState(xTaskDetails2);
+    
+    // vTaskGetInfo(rxSignature, &xTaskDetails, pdTRUE, eInvalid);
+    // printTaskState(xTaskDetails);
+
+    // vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
+    // printTaskState(xTaskDetails2);
 }

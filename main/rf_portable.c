@@ -1,21 +1,4 @@
-/* C libraries */
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <stdint.h>
-/* ESP*/
-#include "esp_partition.h"
-#include "esp_task_wdt.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_err.h"
-#include <esp_wifi.h>
-#include "esp_event.h"
-#include "nvs_flash.h"
-#include "esp_now.h"
-#include <esp_netif.h>
-#include "rf_com.h"
+#include "rf_portable.h"
 #include "rsa_functions.h"
 
 uint8_t authorized_mac_addresses[][6] = {
@@ -25,17 +8,14 @@ uint8_t authorized_mac_addresses[][6] = {
         {0x76, 0xCC, 0xCA, 0x3F, 0x70, 0xCC} // port receives from target address
     };
 
-TaskHandle_t sendSeqHandle = NULL;
 TaskHandle_t rxHandle = NULL;
 TaskHandle_t sequenceHandle = NULL;
 TaskHandle_t sendSigHandle = NULL;
-TaskHandle_t rxSignature = NULL;
 
 const uint8_t *received_num_sequence = NULL;
 size_t received_sequence_length = 0;
-bool message_received = false;
-bool signature_received = false;
-int valid_signature = 0;
+int message_received = 1;
+clock_t start_t_sig;
 
 
 void configure_wifi_station(wifi_mode_t mode){
@@ -100,30 +80,6 @@ void connect_to_peer(uint8_t mac_addresses[6]){
 }
 
 
-void com_target_setup(){
-    configure_wifi_station(WIFI_MODE_APSTA);
-    // esp_now_register_recv_cb(OnDataRecv);
-    esp_now_register_send_cb(OnDataSent);
-    
-    uint8_t *baseMac = malloc(6);
-    get_mac_address(baseMac, WIFI_IF_STA);
-
-    printf("Peer MAC address: ");
-    for (int i = 0; i < 6; i++) {
-        printf("%02X", authorized_mac_addresses[1][i]);
-        if (i < 5) {
-            printf(":"); // Print colon between bytes, but not after the last byte
-        }
-    }
-    printf("\n");
-    
-    esp_wifi_set_channel(1, 6); 
-    connect_to_peer(authorized_mac_addresses[1]); 
-    esp_now_register_recv_cb(OnDataRecv);
-    // esp_now_register_send_cb(OnDataSent);
-}
-
-
 void com_portable_setup(){
     configure_wifi_station(WIFI_MODE_APSTA); 
     // esp_now_register_recv_cb(OnDataRecv_port);
@@ -148,32 +104,6 @@ void com_portable_setup(){
 }
 
 
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  printf("\r\nSequence Packet Send Status:\t");
-  printf(status == ESP_NOW_SEND_SUCCESS ? "Delivered Successfully\n" : "Delivery Fail\n");
-  return;
-}
-
-
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len){
-  // Print the MAC address of the sender
-  printf("Data received from: ");
-    for (int i = 0; i < 6; i++) {
-        printf("%02X:", mac[i]);
-    }
-    printf("\n");
-    
-    printf("Data length: %d\n", len);
-    printf("Received data: ");
-    for (int i = 0; i < len; i++) {
-        printf("%02X ", incomingData[i]);
-    }
-    printf("\n");
-  signature_received = true;
-  return;
-}
-
-
 void OnDataSent_port(const uint8_t *mac_addr, esp_now_send_status_t status){
   printf("\r\nDigital Signature Packet Send Status:\t");
   printf(status == ESP_NOW_SEND_SUCCESS ? "Delivered Successfully\n" : "Delivery Fail\n");
@@ -182,14 +112,15 @@ void OnDataSent_port(const uint8_t *mac_addr, esp_now_send_status_t status){
 
 void OnDataRecv_port(const uint8_t * mac, const uint8_t *incomingData, int len) {  
   // Print the MAC address of the sender
-  printf("Received message from: ");
-  for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
-      printf("%02X", mac[i]);
-      if (i < ESP_NOW_ETH_ALEN - 1) {
-          printf(":");
-      }
-  }
-  printf("\n");
+  start_t_sig = clock();
+  // printf("Received message from: ");
+  // for (int i = 0; i < ESP_NOW_ETH_ALEN; i++) {
+  //     printf("%02X", mac[i]);
+  //     if (i < ESP_NOW_ETH_ALEN - 1) {
+  //         printf(":");
+  //     }
+  // }
+  // printf("\n");
 
   // Print the received data
   printf("Data received: ");
@@ -201,7 +132,7 @@ void OnDataRecv_port(const uint8_t * mac, const uint8_t *incomingData, int len) 
   printf("Signing Sequence...\n");
   received_num_sequence = (uint8_t *) malloc(len);
   memcpy(received_num_sequence, incomingData, len);
-  message_received = true;
+  message_received = 0;
   
   
   BaseType_t result = xTaskCreate(handle_sequence_task, "Handle Sequence Task", 4096, NULL, 2, &sequenceHandle);
@@ -214,35 +145,10 @@ void OnDataRecv_port(const uint8_t * mac, const uint8_t *incomingData, int len) 
 }
 
 
-void send_sequence_task() {
-  // Generate CSPRNS
-  printf("Generating random sequence...\n");
-  unsigned char sequence[4];
-  get_prns(sequence, sizeof(sequence));
-  printf("Random sequence generated successfully.\n");
-
-  vTaskDelay(pdMS_TO_TICKS(2000));
-  esp_err_t result = esp_now_send(authorized_mac_addresses[1], (uint8_t *) &sequence, sizeof(sequence));
-
-  if (result == ESP_OK) {
-    printf("\nSent Successfully.\n");
-  } else {
-    printf("Error while sending the data.\n");
-  }
-
-  // Print the sent data
-  printf("Data sent: ");
-  for (int i = 0; i < sizeof(sequence); i++) {
-      printf("%02X ", sequence[i]);
-  }
-  vTaskDelete(NULL);
-}
-
-
 void receive_sequence_task() {
     printf("Waiting for incoming data...\n");
     // Wait until message
-    while (!message_received) {
+    while (message_received == 1) {
       vTaskDelay(pdMS_TO_TICKS(1000));
     }
     // delete task when message received
@@ -296,6 +202,8 @@ void handle_sequence_task() {
   } else {
       printf("Failed to create signing task.\n");
   }
+
+  vTaskDelete(sequenceHandle);
 }
 
 void send_dig_sig(void *const pvParameters){
@@ -328,23 +236,21 @@ void send_dig_sig(void *const pvParameters){
     }
     else{
       printf("Sent signature successfully\n");
+      clock_t end_t;
+      double total_t;
+      end_t = clock();
+      total_t = (double)(end_t - start_t_sig) / CLOCKS_PER_SEC;
+      printf("Total time taken to generate and send full digital signature: %f seconds\n", total_t);
     }
     
   }
   free(digital_signature_bytes);
+
+  // clock_t end_t;
+  // double total_t;
+  // end_t = clock();
+  // total_t = (double)(end_t - start_t_sig) / CLOCKS_PER_SEC;
+  // printf("Total time taken to generate and send full digital signature: %f seconds\n", total_t);
+
   vTaskDelete(NULL);
-}
-
-
-void receive_sig_task(){
-  printf("Waiting for incoming data...\n");
-
-    // Wait until message
-    while (!signature_received) {
-      printf("go");
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      printf("still running");
-    }
-    // delete task when message received
-    vTaskDelete(rxSignature);
 }
