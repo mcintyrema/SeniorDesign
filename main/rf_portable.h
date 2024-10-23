@@ -18,6 +18,7 @@
 #include "nvs_flash.h"
 #include "esp_now.h"
 #include <esp_netif.h>
+#include "mbedtls/bignum.h"
 
 void configure_wifi_station(wifi_mode_t mode);
 void get_mac_address(uint8_t *address, wifi_interface_t ifx);
@@ -30,6 +31,7 @@ void OnDataRecv_port(const uint8_t * mac, const uint8_t *incomingData, int len);
 void receive_sequence_task();
 void handle_sequence_task();
 void send_dig_sig(void *const pvParameters);
+void send_pub_key();
 
 extern TaskHandle_t rxHandle;
 extern TaskHandle_t sequenceHandle;

@@ -127,9 +127,6 @@ void app_main_target(void)
         vTaskDelay(pdMS_TO_TICKS(2000));
         xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 5, &rxSignature);
     }
-
-    vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
-    printTaskState(xTaskDetails2);
 }
 
 
@@ -146,10 +143,4 @@ void app_main(){
 
     app_main_target();
     // app_main_port();
-    
-    // vTaskGetInfo(rxSignature, &xTaskDetails, pdTRUE, eInvalid);
-    // printTaskState(xTaskDetails);
-
-    // vTaskGetInfo(rxSignature, &xTaskDetails2, pdTRUE, eInvalid);
-    // printTaskState(xTaskDetails2);
 }

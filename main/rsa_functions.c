@@ -427,22 +427,19 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest, mbed
 }
 
 
-void verify_dig_sig(mbedtls_pk_context *pk, mbedtls_mpi digital_signature, unsigned char *message_digest){
+void verify_dig_sig(mbedtls_mpi *N, mbedtls_mpi *E, mbedtls_mpi *digital_signature, unsigned char *message_digest){
   // Verify 
-  mbedtls_mpi_init(&digital_signature); 
-  mbedtls_mpi P, Q, N, D, E;
-  mbedtls_mpi_init(&P); 
-  mbedtls_mpi_init(&Q);
-  mbedtls_mpi_init(&N);
-  mbedtls_mpi_init(&D);
-  mbedtls_mpi_init(&E);
-  mbedtls_rsa_export(mbedtls_pk_rsa(*pk), &N, &P, &Q, &D, &E);
-
+  if (N == NULL || E == NULL || digital_signature == NULL) {
+        printf("Error: One or more input MPI pointers are NULL.\n");
+        return; // Handle error
+    }
   mbedtls_mpi message;
   mbedtls_mpi_init(&message); 
-  int ret = mbedtls_mpi_exp_mod(&message, &digital_signature, &E, &N, NULL);
+  int ret = mbedtls_mpi_exp_mod(&message, digital_signature, E, N, NULL);
   if (ret != 0) {
-    printf("Signature is invalid.\n");
+    printf("ModExp Unsuccessful.\n");
+    mbedtls_mpi_free(&message);
+    return;
   }
   else {
     size_t size = mbedtls_mpi_size(&message);

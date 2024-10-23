@@ -12,8 +12,18 @@ TaskHandle_t sendSeqHandle = NULL;
 TaskHandle_t rxSignature = NULL;
 SemaphoreHandle_t sendCompleteSemaphore = NULL;
 
+// flags
 int signature_received = 1;
-int valid_signature = 0;
+int get_key_now = 1;
+
+#define SIGNATURE_SIZE 256 // signature size in bytes
+#define CHUNK_SIZE 128     // Incoming packet chunk size
+#define PUB_KEY_SIZE 256 // public key size in bytes
+
+uint8_t digital_signature[SIGNATURE_SIZE]; // Buffer to hold the full digital signature
+uint8_t public_key[PUB_KEY_SIZE+3];
+size_t received_bytes = 0; // Track received packets
+unsigned char sequence[4];
 
 
 void configure_wifi_target(wifi_mode_t mode){
@@ -114,27 +124,122 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len){
   // Print the MAC address of the sender
-  printf("Data received from: ");
-    for (int i = 0; i < 6; i++) {
-        printf("%02X:", mac[i]);
-    }
-    printf("\n");
-    
-    printf("Data length: %d\n", len);
-    printf("Received data: ");
-    for (int i = 0; i < len; i++) {
-        printf("%02X ", incomingData[i]);
-    }
-    printf("\n");
+  printf("Data length: %d\n", len);
   signature_received = 0;
+
+  if(get_key_now == 0){
+    // Check if public key received
+    if (received_bytes + len <= (PUB_KEY_SIZE+3)) {
+      // Copy the incoming chunk into the digital_signature buffer
+      memcpy(public_key + received_bytes, incomingData, len);
+      received_bytes += len;
+      printf("Total public key bytes received so far: %zu\n", received_bytes);
+    } 
+    // Check if received the entire signature
+    if(received_bytes == (PUB_KEY_SIZE+3)) {
+      printf("Full public key received.\n");
+      // Reset for public key
+      received_bytes = 0;
+      process_digital_signature(digital_signature, SIGNATURE_SIZE, public_key, 259);
+    }
+  }
+  else{
+    // Check if the incoming data will fit in the buffer
+    if (received_bytes + len <= SIGNATURE_SIZE) {
+      // Copy the incoming chunk into the digital_signature buffer
+      memcpy(digital_signature + received_bytes, incomingData, len);
+      received_bytes += len;
+      printf("Total bytes received so far: %zu\n", received_bytes);
+    } 
+
+    // Check if received the entire signature
+    if(received_bytes == SIGNATURE_SIZE) {
+      printf("Full digital signature received.\n");
+      // Reset for public key
+      received_bytes = 0;
+      get_key_now = 0;
+    }
+  }
+
   return;
+}
+
+
+void process_digital_signature(uint8_t *signature, size_t sig_len, uint8_t *pub_key, size_t pk_len) {
+  printf("Processing digital signature...\n");
+
+  // Initialize mbedtls_mpi structure for the signature
+  mbedtls_mpi mpi_signature;
+  mbedtls_mpi_init(&mpi_signature);
+
+  // Read the signature from the buffer into mbedtls_mpi format
+  int ret = mbedtls_mpi_read_binary(&mpi_signature, signature, sig_len);
+  if (ret != 0) {
+    printf("Error reading digital signature: %d\n", ret);
+    mbedtls_mpi_free(&mpi_signature);
+    return;
+  }
+
+  // Extract N and E from public_key[]
+  size_t n_size = 256;  // Modulus size in bytes 
+  size_t e_size = pk_len - n_size;  // Exponent size 
+
+  // Create mbedtls_mpi structures to hold N and E
+  // mbedtls_mpi N, E;
+  mbedtls_mpi *N = (mbedtls_mpi *)malloc(sizeof(mbedtls_mpi));
+  mbedtls_mpi *E = (mbedtls_mpi *)malloc(sizeof(mbedtls_mpi));
+  mbedtls_mpi_init(&N);
+  mbedtls_mpi_init(&E);
+  
+
+  // Extract modulus N from the public_key array (first n_size bytes)
+  printf("Size of pub_key: %zu bytes\n", pk_len);
+  printf("n_size: %zu bytes\n", n_size);
+  printf("e_size: %zu bytes\n", e_size);
+
+  uint8_t *modulus = malloc(256);
+  memcpy(modulus, pub_key, n_size);
+
+  // Extract exponent (E) from the public_key array (next e_size bytes)
+  uint8_t *exponent = malloc(3);
+  memcpy(exponent, pub_key + n_size, e_size);
+
+  // Print extracted values for N and E
+  // printf("Extracted Modulus (N):\n");
+  // mbedtls_mpi_write_file("N = ", &N, 16, NULL);  // Print modulus in hex format
+
+  // printf("\nExtracted Exponent (E):\n");
+  // mbedtls_mpi_write_file("E = ", &E, 16, NULL);  // Print exponent in hex format
+
+
+  // Verify Signature
+  // mbedtls_mpi_write_file("Signature (Hex): ", &mpi_signature, 16, stdout);
+  // Get hash of generated prns
+  size_t sequence_len = sizeof(sequence);
+  unsigned char *message_digest = malloc(SHA512_DIGEST_LENGTH);
+  get_message_digest(&sequence, sequence_len, message_digest);
+
+  for (int i = 0; i < sizeof(sequence); i++) {
+      printf("%02X ", sequence[i]);
+  }
+
+  // Display bytes of the message digest in hex
+  for (size_t i = 0; i < SHA512_DIGEST_LENGTH; i++) {
+      printf("%02x", message_digest[i]);
+  }
+  verify_dig_sig(&N, &E, &mpi_signature, message_digest); // GURU MEDITATION ERROR
+
+
+  // Free resources
+  mbedtls_mpi_free(&mpi_signature);
+  printf("Digital signature processing completed.\n");
 }
 
 
 void send_sequence_task() {
   // Generate CSPRNS
   printf("Generating random sequence...\n");
-  unsigned char sequence[4];
+  // unsigned char sequence[4];
   get_prns(sequence, sizeof(sequence));
   printf("Random sequence generated successfully.\n");
 
@@ -160,11 +265,9 @@ void send_sequence_task() {
 
 void receive_sig_task(){
   printf("Waiting for incoming data...\n");
-  printf("Initial signature_received value: %d\n", signature_received);
 
   // Wait until message
   while (signature_received == 1) {
-    printf("still running");
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
   // delete task when message received

@@ -17,6 +17,7 @@ const uint8_t *received_num_sequence = NULL;
 size_t received_sequence_length = 0;
 int message_received = 1;
 clock_t start_t_sig;
+mbedtls_pk_context* pk;
 
 
 void configure_wifi_station(wifi_mode_t mode){
@@ -158,6 +159,80 @@ void receive_sequence_task() {
 }
 
 
+void send_pub_key() {
+  mbedtls_mpi N, E;
+  mbedtls_mpi_init(&N);
+  mbedtls_mpi_init(&E);
+  mbedtls_rsa_export(mbedtls_pk_rsa(*pk), &N, NULL, NULL, NULL, &E);
+
+  size_t N_size = mbedtls_mpi_size(&N);  // Get the size of the modulus N (256 bytes)
+  size_t E_size = mbedtls_mpi_size(&E);  // Get the size of the exponent E (typically small)
+  // Print the sizes of N and E
+  printf("Modulus size (N): %zu bytes\n", N_size);
+  printf("Exponent size (E): %zu bytes\n", E_size);
+  
+  unsigned char *N_bytes = malloc(N_size);
+  unsigned char *E_bytes = malloc(E_size);
+
+  // Convert N and E to byte arrays
+  mbedtls_mpi_write_binary(&N, N_bytes, N_size);
+  mbedtls_mpi_write_binary(&E, E_bytes, E_size);
+
+  size_t chunk_size = 128;  // Send in 128-byte chunks
+  for (size_t offset = 0; offset < N_size; offset += chunk_size) {
+    size_t current_chunk_size = (offset + chunk_size <= N_size) ? chunk_size : (N_size - offset);
+    
+    // Check if this is the last chunk, and append the exponent (E) to the end of this packet
+    if (offset + chunk_size >= N_size) {
+      // Create a new buffer to hold N's last chunk and E
+      size_t packet_size = current_chunk_size + E_size;
+      unsigned char *packet = malloc(packet_size);
+
+      // Copy the last chunk of N and the full exponent E into the packet
+      memcpy(packet, N_bytes + offset, current_chunk_size);
+      memcpy(packet + current_chunk_size, E_bytes, E_size);
+
+      // Send the combined packet (last chunk of N and E)
+      esp_err_t result = esp_now_send(authorized_mac_addresses[3], packet, packet_size);
+      if (result != ESP_OK) {
+        printf("Error sending modulus and exponent chunk. Retrying...\n");
+        vTaskDelay(pdMS_TO_TICKS(2000));  // Retry delay
+        result = esp_now_send(authorized_mac_addresses[3], packet, packet_size);
+        if (result != ESP_OK) {
+          printf("Failed to send modulus and exponent chunk.\n");
+          free(packet);
+          return;
+        }
+        else{
+          printf("Sent modulus and exponent chunk.\n");
+        }
+      }
+      free(packet);
+    } 
+    else {
+      // Send the current chunk of the modulus N
+      esp_err_t result = esp_now_send(authorized_mac_addresses[0], N_bytes + offset, current_chunk_size);
+      if (result != ESP_OK) {
+          printf("Error sending modulus chunk. Retrying...\n");
+          vTaskDelay(pdMS_TO_TICKS(2000));  // Retry delay
+          result = esp_now_send(authorized_mac_addresses[3], N_bytes + offset, current_chunk_size);
+          if (result != ESP_OK) {
+              printf("Failed to send modulus chunk.\n");
+              return;
+          }
+          else{
+            printf("Sent Successfully.\n");
+          }
+      }
+    }
+  }
+
+  // Clean up
+  free(N_bytes);
+  free(E_bytes);
+}
+
+
 void handle_sequence_task() {
   // Process sequence
   printf("Sequence to be signed: ");
@@ -168,7 +243,8 @@ void handle_sequence_task() {
 
   // Generate RSA key pair and store in RSA context
   printf("\nGenerating key pair...\n");
-  mbedtls_pk_context* pk = gen_key_pair();
+  pk = gen_key_pair();
+  // mbedtls_pk_context* pk = gen_key_pair();
   test_keys(pk);
   printf("Key pair generated successfully.\n");
 
@@ -194,7 +270,6 @@ void handle_sequence_task() {
   get_digital_sig(pk, message_digest, &digital_signature);
   printf("Digital signature generated successfully.\n");
 
-  mbedtls_pk_free(pk);
   free(message_digest);
 
   vTaskDelay(pdMS_TO_TICKS(2000));
@@ -240,21 +315,18 @@ void send_dig_sig(void *const pvParameters){
     }
     else{
       printf("Sent signature successfully\n");
-      clock_t end_t;
-      double total_t;
-      end_t = clock();
-      total_t = (double)(end_t - start_t_sig) / CLOCKS_PER_SEC;
-      printf("Total time taken to generate and send full digital signature: %f seconds\n", total_t);
     }
     
   }
-  free(digital_signature_bytes);
 
-  // clock_t end_t;
-  // double total_t;
-  // end_t = clock();
-  // total_t = (double)(end_t - start_t_sig) / CLOCKS_PER_SEC;
-  // printf("Total time taken to generate and send full digital signature: %f seconds\n", total_t);
+  clock_t end_t;
+  double total_t;
+  end_t = clock();
+  total_t = (double)(end_t - start_t_sig) / CLOCKS_PER_SEC;
+  printf("Total time taken to generate and send full digital signature: %f seconds\n", total_t);
+  free(digital_signature_bytes);
+  
+  send_pub_key();
 
   vTaskDelete(NULL);
 }
