@@ -173,66 +173,52 @@ void process_digital_signature(uint8_t *signature, size_t sig_len, uint8_t *pub_
   mbedtls_mpi_init(&mpi_signature);
 
   // Read the signature from the buffer into mbedtls_mpi format
-  int ret = mbedtls_mpi_read_binary(&mpi_signature, signature, sig_len);
-  if (ret != 0) {
-    printf("Error reading digital signature: %d\n", ret);
-    mbedtls_mpi_free(&mpi_signature);
-    return;
-  }
+  mbedtls_mpi_read_binary(&mpi_signature, signature, sig_len);
+  printf("Size of digital signature: %d bytes\n", mbedtls_mpi_size(&mpi_signature));
 
   // Extract N and E from public_key[]
   size_t n_size = 256;  // Modulus size in bytes 
   size_t e_size = pk_len - n_size;  // Exponent size 
 
   // Create mbedtls_mpi structures to hold N and E
-  // mbedtls_mpi N, E;
-  mbedtls_mpi *N = (mbedtls_mpi *)malloc(sizeof(mbedtls_mpi));
-  mbedtls_mpi *E = (mbedtls_mpi *)malloc(sizeof(mbedtls_mpi));
+  mbedtls_mpi N;
+  mbedtls_mpi E;
   mbedtls_mpi_init(&N);
   mbedtls_mpi_init(&E);
-  
 
-  // Extract modulus N from the public_key array (first n_size bytes)
-  printf("Size of pub_key: %zu bytes\n", pk_len);
-  printf("n_size: %zu bytes\n", n_size);
-  printf("e_size: %zu bytes\n", e_size);
-
-  uint8_t *modulus = malloc(256);
+  uint8_t *modulus = malloc(n_size);
   memcpy(modulus, pub_key, n_size);
+  mbedtls_mpi_read_binary(&N, modulus, n_size);
+  printf("Size of N: %d bytes\n", mbedtls_mpi_size(&N));
 
   // Extract exponent (E) from the public_key array (next e_size bytes)
-  uint8_t *exponent = malloc(3);
+  uint8_t *exponent = malloc(e_size);
   memcpy(exponent, pub_key + n_size, e_size);
-
-  // Print extracted values for N and E
-  // printf("Extracted Modulus (N):\n");
-  // mbedtls_mpi_write_file("N = ", &N, 16, NULL);  // Print modulus in hex format
-
-  // printf("\nExtracted Exponent (E):\n");
-  // mbedtls_mpi_write_file("E = ", &E, 16, NULL);  // Print exponent in hex format
-
+  mbedtls_mpi_read_binary(&E, exponent, e_size);
+  printf("Size of E: %d bytes\n", mbedtls_mpi_size(&E));
 
   // Verify Signature
-  // mbedtls_mpi_write_file("Signature (Hex): ", &mpi_signature, 16, stdout);
   // Get hash of generated prns
   size_t sequence_len = sizeof(sequence);
   unsigned char *message_digest = malloc(SHA512_DIGEST_LENGTH);
   get_message_digest(&sequence, sequence_len, message_digest);
 
-  for (int i = 0; i < sizeof(sequence); i++) {
-      printf("%02X ", sequence[i]);
-  }
-
-  // Display bytes of the message digest in hex
-  for (size_t i = 0; i < SHA512_DIGEST_LENGTH; i++) {
-      printf("%02x", message_digest[i]);
-  }
-  verify_dig_sig(&N, &E, &mpi_signature, message_digest); // GURU MEDITATION ERROR
+  verify_dig_sig(&N, &E, &mpi_signature, message_digest);
 
 
   // Free resources
   mbedtls_mpi_free(&mpi_signature);
   printf("Digital signature processing completed.\n");
+  if(valid_signature == 0){
+      printf("Send 0 signal\n");
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      deinitialize_wifi_target();
+  }
+  else{
+      printf("Send 1 signal\n");
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      deinitialize_wifi_target();
+  }
 }
 
 

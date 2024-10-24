@@ -34,53 +34,6 @@ TaskStatus_t xTaskDetails;
 TaskStatus_t xTaskDetails2;
 
 
-int main(){
-  // Subscribe task to WDT
-  esp_task_wdt_add(NULL);
-  esp_task_wdt_reset();
-  esp_task_wdt_delete(NULL);
-  esp_task_wdt_deinit();
-
-  // Generate CSPRNS
-  printf("Generating random sequence...\n");
-  unsigned char sequence[4];
-  get_prns(sequence, sizeof(sequence));
-  printf("Random sequence generated successfully.\n");
-  printf("Generated sequence: 0x");
-  for (int i = 0; i < sizeof(sequence); i++) {
-      printf("%02x", sequence[i]);
-  }
-  
-  // Generate RSA key pair and store in RSA context
-  printf("\nGenerating key pair...\n");
-  mbedtls_pk_context* pk = gen_key_pair();
-  test_keys(pk);
-  printf("Key pair generated successfully.\n");
-
-  // Encrypts only the private key in its own partition while the rest of the data is plaintext
-  printf("Storing private key...\n");
-  save_rsa_private_key(pk);
-  printf("Private key stored successfully.\n");
-
-  // Generate message digest using SHA-512
-  printf("Generating message digest...\n");
-  size_t sequence_len = sizeof(sequence);
-  unsigned char *message_digest = malloc(SHA512_DIGEST_LENGTH);
-  get_message_digest(sequence, sequence_len, message_digest);
-  test_hash(message_digest, SHA512_DIGEST_LENGTH);
-  printf("Message digest generated successfully.\n");
-
-  // Generate digital signature
-//   printf("Generating digital signature...\n");
-//   get_digital_sig(pk, message_digest);
-//   printf("Digital signature generated successfully.\n");
-
-  mbedtls_pk_free(pk);
-  free(message_digest);
-  return 0;
-}
-
-
 void printTaskState(TaskStatus_t xTaskDetails) {
     switch (xTaskDetails.eCurrentState) {
         case eRunning:
@@ -127,6 +80,7 @@ void app_main_target(void)
         vTaskDelay(pdMS_TO_TICKS(2000));
         xTaskCreate(receive_sig_task, "Receive Signature Task", 8192, NULL, 5, &rxSignature);
     }
+
 }
 
 
@@ -135,12 +89,14 @@ void app_main_port(void)
     com_portable_setup();
     //loop
     xTaskCreate(receive_sequence_task, "Receive Task", 4096, NULL, 1, &rxHandle);
+    vTaskDelay(pdMS_TO_TICKS(60000));
+    deinitialize_wifi();
 }
 
 
 void app_main(){
-    esp_wifi_set_max_tx_power(84);
+    esp_wifi_set_max_tx_power(84); //21 dBm, 340mA for Tx, 91mA for Rx
 
-    app_main_target();
     // app_main_port();
+    app_main_target();
 }

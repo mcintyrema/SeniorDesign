@@ -35,6 +35,7 @@ extern TaskHandle_t sendSeqHandle;
 extern TaskHandle_t rxSignature;
 extern uint8_t authorized_mac_addresses[][6];
 extern SemaphoreHandle_t sendCompleteSemaphore;
+extern SemaphoreHandle_t verifySignatureSemaphore;
 extern unsigned char sequence[4];
 
 #endif

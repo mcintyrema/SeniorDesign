@@ -45,5 +45,6 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest, mbed
 void verify_dig_sig(mbedtls_mpi *N, mbedtls_mpi *E, mbedtls_mpi *digital_signature, unsigned char *message_digest);
 
 #define SHA512_DIGEST_LENGTH 64
+extern int valid_signature;
 
 #endif

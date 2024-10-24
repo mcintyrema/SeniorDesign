@@ -1,34 +1,8 @@
-// /* C libraries */
-// #include <stdio.h>
-// #include <string.h>
-// #include <stdlib.h>
-// #include <stdint.h>
-// /* wolfSSL */
-// #include "wolfssl/wolfcrypt/settings.h"
-// #include "wolfssl/ssl.h"
-// #include "wolfssl/wolfcrypt/random.h"
-// /* mbedTLS */
-// #include "mbedtls/pk.h"
-// #include "mbedtls/rsa.h"
-// #include "mbedtls/entropy.h"
-// #include "mbedtls/ctr_drbg.h"
-// #include "mbedtls/bignum.h"
-// #include <mbedtls/sha512.h>
-// /* ESP32-S3 */
-// #include "esp_partition.h"
-// #include "esp_task_wdt.h"
-// #include "freertos/FreeRTOS.h"
-// #include "freertos/task.h"
-// #include "esp_err.h"
-// #include <esp_wifi.h>
-// // #include <esp_netif.h>
-// #include "esp_event.h"
-// #include "nvs_flash.h"
-// #include "esp_now.h"
-/* COM FILES */
 #include "rsa_functions.h"
 
 #define SHA512_DIGEST_LENGTH 64
+
+int valid_signature = 0;
 
 
 // CSPRNG returns number sequence
@@ -429,12 +403,10 @@ void get_digital_sig(mbedtls_pk_context *pk, unsigned char *message_digest, mbed
 
 void verify_dig_sig(mbedtls_mpi *N, mbedtls_mpi *E, mbedtls_mpi *digital_signature, unsigned char *message_digest){
   // Verify 
-  if (N == NULL || E == NULL || digital_signature == NULL) {
-        printf("Error: One or more input MPI pointers are NULL.\n");
-        return; // Handle error
-    }
   mbedtls_mpi message;
   mbedtls_mpi_init(&message); 
+
+  printf("Starting modular exponentiation...\n");
   int ret = mbedtls_mpi_exp_mod(&message, digital_signature, E, N, NULL);
   if (ret != 0) {
     printf("ModExp Unsuccessful.\n");
@@ -458,10 +430,14 @@ void verify_dig_sig(mbedtls_mpi *N, mbedtls_mpi *E, mbedtls_mpi *digital_signatu
     if(ret == 0) {
       printf("\nHashes match!\n");
       printf("Signature is valid.\n");
+      valid_signature = 1;
     } 
     else{
       printf("\nHashes do not match.\n");
       printf("Signature is invalid.\n");
+      valid_signature = 0;
     }
   }
+  mbedtls_mpi_free(&message); 
+  return;
 }
